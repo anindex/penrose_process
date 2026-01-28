@@ -364,14 +364,6 @@ def project_to_mass_shell(y, last_pr_sign=None):
     return np.array([r, phi, pt, pr_new, pphi, m], dtype=float)
 
 
-# -----------------------------------------------------------------------------
-# NOTE: build_rocket_rest_basis and related helper functions are now imported
-# from kerr_utils.py to avoid code duplication. The local definitions have been
-# removed. If you need the local versions for debugging, they were:
-#   _inner_prod_tr, _normalize_spacelike, build_rocket_rest_basis
-# -----------------------------------------------------------------------------
-
-
 # -----------------------
 # Continuous thrust dynamics (equatorial: th=pi/2, p_th=0)
 # State: [r, phi, p_t, p_r, p_phi, m]

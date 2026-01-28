@@ -3,9 +3,6 @@ Unit Tests for Kerr Metric Derivatives
 =======================================
 Compares analytic derivatives against finite-difference approximations
 to validate correctness, especially near the horizon where errors matter most.
-
-This test was added to address reviewer feedback regarding incorrect 
-analytic derivatives in kerr_utils.kerr_metric_derivatives().
 """
 
 import numpy as np

@@ -15,9 +15,6 @@ Statistical outputs:
 - BCa bootstrap CIs for efficiency metrics
 - Sweet spot identification
 - Efficiency vs spin correlation
-
-Author: An T. Le
-Date: 2026-01-24
 """
 
 import numpy as np

@@ -12,7 +12,6 @@ This script orchestrates:
 Usage:
     python run_trajectory_study.py [--quick] [--full] [--spins 0.95 0.99]
 
-Author: An T. Le
 """
 
 import numpy as np

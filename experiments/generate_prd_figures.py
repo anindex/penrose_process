@@ -16,8 +16,6 @@ All figures follow Physical Review D guidelines:
 - 600 DPI PDF output
 - DejaVu Serif / STIX fonts
 - Colorblind-friendly Wong palette
-
-Author: An T. Le
 """
 
 import numpy as np

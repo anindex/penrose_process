@@ -3,8 +3,6 @@ Integrator Convergence Study
 ============================
 Tests numerical convergence of trajectory integration with respect to timestep.
 
-This addresses reviewer concern about algorithm dependence of results.
-
 IMPORTANT FINDING:
 - The parameter sweeps use scipy.integrate.solve_ivp with DOP853 (8th order)
 - Only continuous_thrust_case.py uses Euler with mass-shell projection
@@ -15,9 +13,6 @@ Key tests:
 1. Timestep convergence: Deltatau  in  {0.02, 0.01, 0.005, 0.002} 
 2. Cross-check: Euler vs scipy.integrate.solve_ivp (RK45/Radau/DOP853)
 3. Success rate stability across integrators
-
-Author: An T. Le
-Date: 2026-01-25
 """
 
 import numpy as np

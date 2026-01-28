@@ -4,8 +4,6 @@ Null tests for Penrose process physics validation.
 These tests verify that the simulation correctly predicts:
 1. No Penrose extraction for a=0 (Schwarzschild black hole)
 2. No Penrose extraction for thrust outside the ergosphere
-
-These are critical sanity checks requested by reviewers.
 """
 
 import numpy as np
