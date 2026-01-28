@@ -1,6 +1,6 @@
 # Penrose Energy Extraction via Rocket Propulsion
 
-[![arXiv](https://img.shields.io/badge/arXiv-2502.08378-brown)](https://arxiv.org/abs/2601.19616) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![arXiv](https://img.shields.io/badge/arXiv-2601.19616-brown)](https://arxiv.org/abs/2601.19616) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Numerical study of energy extraction from rotating (Kerr) black holes via the Penrose process using rocket propulsion. This repository accompanies the paper [*"On the rarity of rocket-driven Penrose extraction in Kerr spacetime"*](https://arxiv.org/abs/2601.19616).
 
@@ -114,6 +114,50 @@ python experiments/run_trajectory_study.py --mode full
 ```bash
 python experiments/trajectory_visualization.py --spin 0.95
 ```
+
+---
+
+## Reproducing Paper Figures
+
+All six figures from the paper can be reproduced using the provided scripts.
+
+### Quick reproduction (uses existing/fallback data)
+
+```bash
+# Generate all 6 figures (PDF + PNG)
+python experiments/generate_prd_figures.py
+```
+
+This creates `figures/fig1_orbit_classification.pdf` through `figures/fig6_ultrarel_saturation.pdf`.
+
+### Full regeneration from simulations
+
+To regenerate the underlying sweep data from scratch (~120,000 trajectories, 4-8 hours):
+
+```bash
+# Regenerate JSON data for Figures 5 and 6
+python experiments/regenerate_sweep_data.py
+
+# Then generate figures from new data
+python experiments/generate_prd_figures.py
+```
+
+Options for `regenerate_sweep_data.py`:
+- `--fig5`: Only regenerate Figure 5 data (velocity phase transition)
+- `--fig6`: Only regenerate Figure 6 data (ultra-relativistic saturation)
+- `--quick`: Quick test mode (50 samples/point instead of 500)
+- `--workers N`: Number of parallel workers
+
+### Figure descriptions
+
+| Figure | File | Description |
+|--------|------|-------------|
+| 1 | `fig1_orbit_classification.pdf` | Orbit classification in $(E_0, L_z)$ space |
+| 2 | `fig2_ensemble_statistics.pdf` | Penrose success rate vs spin |
+| 3 | `fig3_thrust_comparison.pdf` | Single-impulse vs continuous thrust |
+| 4 | `fig4_spin_dependence.pdf` | Spin dependence of extraction window |
+| 5 | `fig5_thrust_sensitivity.pdf` | Velocity phase transition at $v_e \approx 0.91c$ |
+| 6 | `fig6_ultrarel_saturation.pdf` | Efficiency saturation as $v_e \to c$ |
 
 ---
 
