@@ -1,8 +1,8 @@
 # Penrose Energy Extraction via Rocket Propulsion
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![arXiv](https://img.shields.io/badge/arXiv-2502.08378-brown)](https://arxiv.org/abs/2601.19616) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Numerical study of energy extraction from rotating (Kerr) black holes via the Penrose process using rocket propulsion. This repository accompanies the paper *"On the rarity of rocket-driven Penrose extraction in Kerr spacetime"* (coming soon).
+Numerical study of energy extraction from rotating (Kerr) black holes via the Penrose process using rocket propulsion. This repository accompanies the paper [*"On the rarity of rocket-driven Penrose extraction in Kerr spacetime"*](https://arxiv.org/abs/2601.19616).
 
 ## Results
 
@@ -29,7 +29,7 @@ A single impulsive burn at periapsis achieves maximum efficiency (~19%) by conce
 ![Single Impulse Penrose Extraction](visualizations/single_penrose.gif)
 
 ### Continuous Thrust
-Sustained thrust throughout the ergosphere passage demonstrates path-averaging effects that reduce efficiency to 2--6%.
+Sustained thrust throughout the ergosphere passage demonstrates path-averaging effects that reduce efficiency to 2--4%.
 
 ![Continuous Penrose Extraction](visualizations/continuous_penrose.gif)
 
