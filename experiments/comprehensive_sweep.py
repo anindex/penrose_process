@@ -66,14 +66,14 @@ class ComprehensiveSweepConfig:
     # Phase space grid - WIDE coverage
     E_range_broad: Tuple[float, float] = (0.95, 2.0)
     Lz_range_broad: Tuple[float, float] = (-3.0, 6.0)
-    n_E_broad: int = 50
-    n_Lz_broad: int = 50
+    n_E_broad: int = 80
+    n_Lz_broad: int = 80
     
     # Phase space grid - FOCUSED (sweet spot region)
     E_range_focused: Tuple[float, float] = (1.10, 1.40)
     Lz_range_focused: Tuple[float, float] = (2.5, 3.8)
-    n_E_focused: int = 40
-    n_Lz_focused: int = 40
+    n_E_focused: int = 60
+    n_Lz_focused: int = 60
     
     # Thrust parameter variations
     v_e_values: Tuple[float, ...] = (0.80, 0.90, 0.95, 0.98)
@@ -123,7 +123,7 @@ def run_single_config(params: Dict) -> Dict:
         r0=15.0,
         m0=1.0,
         tau_max=800.0,
-        escape_radius=100.0,
+        escape_radius=50.0,
     )
     
     result = simulate_single_impulse(config)

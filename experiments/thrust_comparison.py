@@ -49,7 +49,7 @@ class SimulationConfig:
     # Initial conditions
     E0: float = 1.2
     Lz0: float = 3.0
-    r0: float = 10.0
+    r0: float = 15.0
     m0: float = 1.0
     
     # Thrust parameters
@@ -62,7 +62,7 @@ class SimulationConfig:
     tau_max: float = 500.0     # Increased max proper time
     dt: float = 0.001          # Finer initial step
     escape_radius: float = 50.0
-    horizon_margin: float = 0.05  # Increased margin for stability
+    horizon_margin: float = 0.02  # Capture at r < r_+ + 0.02M (matches paper Sec. IV.C)
     
     # Numerical tolerances
     rtol: float = 1e-10        # High accuracy tolerance
