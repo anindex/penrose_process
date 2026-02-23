@@ -21,10 +21,6 @@ from datetime import datetime
 from typing import Optional
 import json
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import setup_prd_style
 
 from experiments.trajectory_classifier import (

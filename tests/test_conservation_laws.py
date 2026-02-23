@@ -7,8 +7,6 @@ conservation of energy and angular momentum, mass-shell constraint,
 4-velocity normalization.
 """
 
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,

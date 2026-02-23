@@ -22,10 +22,6 @@ import time
 import json
 from pathlib import Path
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     horizon_radius, ergosphere_radius, isco_radius,
     compute_extraction_limit_radius

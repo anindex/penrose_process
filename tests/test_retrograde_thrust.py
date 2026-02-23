@@ -1,10 +1,6 @@
 
 """Test continuous thrust with retrograde direction for Penrose extraction."""
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import numpy as np
 from scipy.integrate import solve_ivp
 from kerr_utils import (

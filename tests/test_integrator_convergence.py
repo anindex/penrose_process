@@ -19,11 +19,6 @@ import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
 from typing import Tuple, List, Dict
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,
     kerr_metric_derivatives, compute_dH_dr_analytic

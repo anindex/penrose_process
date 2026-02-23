@@ -27,12 +27,6 @@ from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
 from pathlib import Path
 import json
-import sys
-import os
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     COLORS, PRD_SINGLE_COL, PRD_DOUBLE_COL, setup_prd_style,
     horizon_radius, ergosphere_radius, isco_radius,

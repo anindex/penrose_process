@@ -20,10 +20,6 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 import matplotlib.gridspec as gridspec
 from typing import Dict, List, Optional, Tuple, Any
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     COLORS, PRD_SINGLE_COL, PRD_DOUBLE_COL, setup_prd_style,
     kerr_metric_components, horizon_radius, ergosphere_radius, isco_radius

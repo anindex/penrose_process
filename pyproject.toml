@@ -1,0 +1,13 @@
+[project]
+name = "penrose-process"
+version = "1.0.0"
+requires-python = ">=3.8"
+dependencies = ["numpy", "scipy", "matplotlib", "pandas"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["kerr_utils", "single_thrust_case", "continuous_thrust_case"]
+packages = ["experiments", "tests"]

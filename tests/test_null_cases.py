@@ -7,8 +7,6 @@ These tests verify that the simulation correctly predicts:
 """
 
 import numpy as np
-import sys
-sys.path.insert(0, '..')
 
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,

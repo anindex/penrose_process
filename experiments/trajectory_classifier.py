@@ -17,10 +17,6 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict, Any
 from scipy.optimize import brentq
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,
     compute_pt_from_mass_shell, frame_dragging_omega, isco_radius

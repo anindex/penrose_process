@@ -20,10 +20,6 @@ import matplotlib.gridspec as gridspec
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from kerr_utils import (
     horizon_radius, ergosphere_radius, COLORS, setup_prd_style
 )

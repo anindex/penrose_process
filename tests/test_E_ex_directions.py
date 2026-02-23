@@ -1,10 +1,6 @@
 
 """Test which thrust direction gives E_ex < 0."""
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import numpy as np
 from kerr_utils import (
     kerr_metric_components, horizon_radius,

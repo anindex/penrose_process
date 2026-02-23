@@ -5,10 +5,6 @@ If the flyby orbit has a genuine turning point, it should escape without any thr
 This confirms our orbital parameters are correct.
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import numpy as np
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,
