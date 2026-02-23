@@ -57,19 +57,34 @@ where the exhaust 4-velocity is $u_{\rm ex}^\mu = \gamma_e(u^\mu - v_e s^\mu)$ f
 
 ```
 penrose_process/
-|── continuous_thrust_case.py   # Sustained ergosphere thrust
-|── single_thrust_case.py       # Single impulsive burn at periapsis
-|── kerr_utils.py               # Kerr metric utilities
-|── experiments/
-|   |── trajectory_classifier.py    # Orbit classification
-|   |── parameter_sweep.py          # Grid-based exploration
-|   |── comprehensive_sweep.py      # Full statistical sweeps
-|   |── thrust_comparison.py        # Strategy comparison
-|   |── ensemble.py                 # Monte Carlo analysis
-|   |── run_trajectory_study.py     # CLI runner
-|   `── trajectory_visualization.py # Animated visualizations
-|── tests/                      # Physics validation tests
-`── results/                    # Generated output
+|-- kerr_utils.py                  # Kerr metric, geodesic equations, impulse mechanics
+|-- single_thrust_case.py          # Single impulsive burn at periapsis
+|-- continuous_thrust_case.py      # Sustained ergosphere thrust (RK4 integrator)
+|-- pyproject.toml                 # Package configuration
+|-- experiments/
+|   |-- trajectory_classifier.py   # Orbit classification (flyby, plunge, bound)
+|   |-- parameter_sweep.py         # Grid-based parameter exploration
+|   |-- comprehensive_sweep.py     # Full statistical sweeps
+|   |-- thrust_comparison.py       # Strategy comparison (geodesic/impulse/continuous)
+|   |-- ensemble.py                # Monte Carlo analysis with BCa bootstrap CIs
+|   |-- run_trajectory_study.py    # CLI orchestrator
+|   |-- generate_prd_figures.py    # Paper figure generation (6 figures)
+|   |-- regenerate_sweep_data.py   # Sweep data regeneration
+|   |-- trajectory_visualization.py # Animated GIF generation
+|   |-- phase_space.py             # Phase-space (E, Lz) diagrams
+|   `-- benchmark.py               # Performance and reproducibility tracking
+|-- tests/
+|   |-- test_conservation_laws.py  # Conservation laws and analytical solutions
+|   |-- test_derivatives.py        # Kerr metric derivative validation
+|   |-- test_null_cases.py         # Schwarzschild and outside-ergosphere null tests
+|   |-- test_geodesic.py           # Pure geodesic flyby validation
+|   |-- test_optimal_thrust.py     # Optimal thrust direction test
+|   |-- test_retrograde_thrust.py  # Retrograde exhaust Penrose condition test
+|   |-- test_E_ex_directions.py    # Exhaust energy directional dependence
+|   `-- test_integrator_convergence.py # ODE solver accuracy analysis
+|-- results/                       # Pre-computed sweep data (JSON)
+|-- figures/                       # Generated paper figures (PDF/PNG)
+`-- visualizations/                # Animated GIFs
 ```
 
 ---
@@ -77,10 +92,12 @@ penrose_process/
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-**Requirements:** Python >= 3.8, numpy, scipy, matplotlib
+This installs the package in editable mode, making all modules importable without path hacks.
+
+**Requirements:** Python >= 3.8, numpy, scipy, matplotlib, pandas
 
 ---
 
@@ -113,6 +130,17 @@ python experiments/run_trajectory_study.py --mode full
 
 ```bash
 python experiments/trajectory_visualization.py --spin 0.95
+```
+
+### Run tests
+
+```bash
+# Run all tests (requires pip install pytest)
+pytest tests/
+
+# Or run individual test files directly
+python tests/test_conservation_laws.py
+python tests/test_null_cases.py
 ```
 
 ---
@@ -163,7 +191,7 @@ Options for `regenerate_sweep_data.py`:
 
 ## Numerical Configuration
 
-Recommended solver settings for Kerr geodesics:
+The continuous thrust integrator uses classical RK4 with mass-shell projection. For geodesic phases, the recommended solver settings are:
 
 ```python
 from scipy.integrate import solve_ivp
@@ -189,4 +217,3 @@ Initial conditions: $r_0 = 15M$, escape radius: $50M$
 2. R. M. Wald, *Astrophys. J.* **191**, 231 (1974). [doi:10.1086/152959](https://doi.org/10.1086/152959)
 
 3. S. Chandrasekhar, *The Mathematical Theory of Black Holes* (Oxford University Press, 1983).
-
