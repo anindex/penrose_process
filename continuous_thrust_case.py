@@ -819,6 +819,7 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
     # Sample output every this many steps
     sample_every = 10
     step = 0
+    last_pr_sign = None
 
     while tau < tau_end:
         r, phi, pt, pr, pphi, m = y
@@ -872,18 +873,24 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
                 termination_reason = 'escape'  # Still far enough to consider escaped
             break
         
-        # Get dynamics
-        dydt = dynamics_continuous(tau, y)
-        
+        # Get dynamics and integrate with classical RK4
+        k1 = np.array(dynamics_continuous(tau, y))
+
         # Track last non-zero pr sign for turning point handling
         if abs(y[3]) > 1e-12:
             last_pr_sign = np.sign(y[3])
-        
-        # Euler step
-        y_new = y + np.array(dydt) * dt
-        
+
+        y2 = y + 0.5 * dt * k1
+        k2 = np.array(dynamics_continuous(tau + 0.5 * dt, y2))
+        y3 = y + 0.5 * dt * k2
+        k3 = np.array(dynamics_continuous(tau + 0.5 * dt, y3))
+        y4 = y + dt * k3
+        k4 = np.array(dynamics_continuous(tau + dt, y4))
+
+        y_new = y + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+
         # Project back to mass shell (with turning point handling)
-        y_new = project_to_mass_shell(y_new, last_pr_sign=last_pr_sign if 'last_pr_sign' in dir() else None)
+        y_new = project_to_mass_shell(y_new, last_pr_sign=last_pr_sign)
         
         y = y_new
         tau += dt

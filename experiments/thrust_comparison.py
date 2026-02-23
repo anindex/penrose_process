@@ -27,7 +27,7 @@ from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,
     compute_pt_from_mass_shell, compute_exhaust_energy, build_rocket_rest_basis,
     apply_exact_impulse, compute_optimal_exhaust_direction,
-    compute_cumulative_efficiency
+    compute_cumulative_efficiency, compute_dH_dr_analytic
 )
 from experiments.trajectory_classifier import (
     OrbitProfile, TrajectoryOutcome, ThrustStrategy,
@@ -116,41 +116,7 @@ def geodesic_dynamics(tau: float, state: np.ndarray, config: SimulationConfig) -
     u_phi = (gu_tphi * pt + gu_phiphi * pphi) / m
     
     # Analytic Hamiltonian gradient for equatorial Kerr
-    # H = (1/2) g^{munu} p_mu p_nu + (1/2) m^2
-    # For equatorial motion: dH/dr with analytic metric derivatives
-    
-    # Kerr metric quantities at equator
-    Delta = r_safe**2 - 2*M*r_safe + a**2
-    Sigma = r_safe**2  # At theta = pi/2
-    
-    # Derivatives of Delta and Sigma
-    dDelta_dr = 2*r_safe - 2*M
-    dSigma_dr = 2*r_safe
-    
-    # Contravariant metric derivatives (analytic)
-    # g^tt = -(r^2 + a^2 + 2Ma^2/r) / Delta  
-    # g^tphi = -2Ma / (r * Delta)
-    # g^rr = Delta / r^2
-    # g^phiphi = (1 - 2M/r) / (r^2 sin^2theta) -> at equator sin^2theta = 1
-    
-    # Numerical derivative as fallback (more stable for complex expressions)
-    eps = 1e-7 * r_safe  # Scale epsilon with radius
-    def H_at_r(r_):
-        if r_ < r_plus + config.horizon_margin:
-            r_ = r_plus + config.horizon_margin
-        _, con_ = kerr_metric_components(r_, th, a, M, clamp_horizon=True, warn_horizon=False)
-        gu_tt_, gu_tphi_, gu_rr_, _, gu_phiphi_ = con_
-        return 0.5 * (gu_tt_ * pt**2 + 2*gu_tphi_ * pt * pphi + 
-                      gu_rr_ * pr**2 + gu_phiphi_ * pphi**2)
-    
-    # Central difference with safeguards
-    r_plus_eps = min(r_safe + eps, r_safe * 1.01)
-    r_minus_eps = max(r_safe - eps, r_plus + config.horizon_margin)
-    
-    if r_plus_eps > r_minus_eps:
-        dH_dr = (H_at_r(r_plus_eps) - H_at_r(r_minus_eps)) / (r_plus_eps - r_minus_eps)
-    else:
-        dH_dr = 0.0  # Fallback near horizon
+    dH_dr = compute_dH_dr_analytic(r_safe, th, pt, pr, pphi, m, a, M)
     
     # Clamp derivatives to prevent overflow
     max_deriv = 1e6
@@ -440,7 +406,8 @@ def simulate_single_impulse(config: SimulationConfig,
             raise ValueError(f"Invalid post-impulse mass: {m_new}")
         
     except Exception as e:
-        # Silently handle - don't print for every failure
+        import logging
+        logging.debug(f"Impulse failed for config (E0={config.E0}, Lz0={config.Lz0}, a={config.a}): {e}")
         result.outcome = TrajectoryOutcome.INTEGRATION_FAILURE
         return result
     

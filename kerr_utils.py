@@ -609,12 +609,21 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
 # =============================================================================
 
 def kerr_metric_derivatives(r, th, a, M=1.0):
-    """Analytic derivatives d(g^munu)/dr. More accurate than finite differences near horizon."""
-    # For equatorial plane (th = pi/2)
+    """Analytic derivatives d(g^munu)/dr for equatorial Kerr (theta = pi/2).
+
+    These derivatives use equatorial simplifications (Sigma = r^2) and are
+    only valid at theta = pi/2. For off-equatorial use, general-theta
+    derivatives would need to be implemented.
+    """
+    if abs(th - np.pi/2) > 1e-6:
+        raise ValueError(
+            f"kerr_metric_derivatives is only valid at the equatorial plane "
+            f"(theta = pi/2). Got theta = {th:.6f}, "
+            f"|theta - pi/2| = {abs(th - np.pi/2):.2e}"
+        )
     sin2 = np.sin(th)**2
     cos2 = np.cos(th)**2
-    
-    # At equator: Sigma = r^2, but keep general for future extension
+
     Sigma = r**2 + a**2 * cos2
     Delta = r**2 - 2*M*r + a**2
     

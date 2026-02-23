@@ -211,6 +211,10 @@ def test_exhaust_energy_signs(verbose=True):
                 
                 # Verify physics
                 if not inside:
+                    assert E_ex >= 0, (
+                        f"Physics violation: E_ex = {E_ex:.6f} < 0 outside "
+                        f"ergosphere at r = {r:.2f}M (r_erg = {r_erg_eq:.2f}M)"
+                    )
                     if E_ex < 0:
                         print(f"  WARNING: Got E_ex < 0 outside ergosphere at r={r}M!")
         except Exception as e:

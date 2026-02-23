@@ -430,7 +430,7 @@ def _apply_impulse_approximate(state, delta_m_fraction=0.3, minimize_E_ex=False)
             pr_trial = pr + dpr_impulse
             
             # Constraints for escape
-            can_escape = E_new > 1.0 and pr_trial > 0
+            can_escape = E_new > m_new and pr_trial > 0
             
             if can_escape and E_ex_trial < best_E_ex:
                 best_E_ex = E_ex_trial

@@ -45,8 +45,10 @@ from experiments.ensemble import (
 )
 
 
-# Suppress integration warnings for cleaner output
-warnings.filterwarnings('ignore', category=RuntimeWarning)
+# Suppress integration warnings for cleaner output (targeted, not blanket)
+warnings.filterwarnings('ignore', message='.*divide by zero.*', category=RuntimeWarning)
+warnings.filterwarnings('ignore', message='.*invalid value encountered.*', category=RuntimeWarning)
+warnings.filterwarnings('ignore', message='.*overflow encountered.*', category=RuntimeWarning)
 
 
 # =============================================================================
@@ -136,9 +138,8 @@ def run_single_config(params: Dict) -> Dict:
         'delta_m': delta_m,
         'outcome': result.outcome.name,
         'is_escape': result.outcome == TrajectoryOutcome.ESCAPE,
-        'is_penrose': (result.outcome == TrajectoryOutcome.ESCAPE and 
-                       result.E_ex_mean is not None and 
-                       result.E_ex_mean < 0),
+        'is_penrose': (result.outcome == TrajectoryOutcome.ESCAPE and
+                       result.penrose_fraction > 0.5),
         'Delta_E': result.Delta_E if result.Delta_E is not None else np.nan,
         'E_ex': result.E_ex_mean if result.E_ex_mean is not None else np.nan,
         'eta_cumulative': result.eta_cumulative if result.eta_cumulative is not None else np.nan,
@@ -162,13 +163,18 @@ def run_batch_parallel(param_list: List[Dict], n_workers: int = 8) -> List[Dict]
                 result = future.result(timeout=60)
                 results.append(result)
             except Exception as e:
-                # Record failure
+                # Record failure with all expected keys for downstream compatibility
                 idx = futures[future]
                 results.append({
                     **param_list[idx],
                     'outcome': 'EXCEPTION',
                     'is_escape': False,
                     'is_penrose': False,
+                    'Delta_E': np.nan,
+                    'E_ex': np.nan,
+                    'eta_cumulative': np.nan,
+                    'r_min': np.nan,
+                    'penrose_fraction': 0.0,
                     'error': str(e),
                 })
     

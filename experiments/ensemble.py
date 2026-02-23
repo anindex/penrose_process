@@ -236,7 +236,9 @@ def bca_bootstrap_ci(data: np.ndarray,
         theta_boot[i] = stat_func(data[indices])
     
     # Bias correction factor (z0)
-    z0 = stats.norm.ppf(np.mean(theta_boot < theta_hat))
+    prop_below = np.mean(theta_boot < theta_hat)
+    prop_below = np.clip(prop_below, 1e-10, 1 - 1e-10)  # Avoid ppf(0) = -inf or ppf(1) = +inf
+    z0 = stats.norm.ppf(prop_below)
     
     # Acceleration factor (a) via jackknife
     theta_jack = np.zeros(n)
@@ -579,13 +581,13 @@ class EnsembleResult:
         if escaped:
             Delta_E_vals = [r.Delta_E for r in escaped]
             self.Delta_E_mean = np.mean(Delta_E_vals)
-            self.Delta_E_std = np.std(Delta_E_vals)
+            self.Delta_E_std = np.std(Delta_E_vals, ddof=1) if len(Delta_E_vals) > 1 else 0.0
             self.Delta_E_median = np.median(Delta_E_vals)
             
             eta_vals = [r.eta_cumulative for r in escaped if r.eta_cumulative > 0]
             if eta_vals:
                 self.eta_cum_mean = np.mean(eta_vals)
-                self.eta_cum_std = np.std(eta_vals)
+                self.eta_cum_std = np.std(eta_vals, ddof=1) if len(eta_vals) > 1 else 0.0
             
             E_ex_vals = [r.E_ex_mean for r in escaped if r.n_total_E_ex > 0]
             if E_ex_vals:
@@ -616,7 +618,7 @@ class EnsembleResult:
             f"Mean E_ex: {self.E_ex_mean:.4f}",
             f"Mean Penrose fraction: {100*self.penrose_fraction_mean:.1f}%",
             "-"*70,
-            f"Duration: {self.duration:.1f}s ({self.duration/self.n_total:.3f}s/sample)",
+            f"Duration: {self.duration:.1f}s ({self.duration/self.n_total:.3f}s/sample)" if self.n_total > 0 else f"Duration: {self.duration:.1f}s (no samples)",
             "="*70,
         ]
         return "\n".join(lines)

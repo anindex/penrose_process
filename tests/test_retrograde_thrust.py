@@ -1,10 +1,14 @@
 
 """Test continuous thrust with retrograde direction for Penrose extraction."""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from scipy.integrate import solve_ivp
 from kerr_utils import (
-    kerr_metric_components, horizon_radius, 
+    kerr_metric_components, horizon_radius,
     compute_dH_dr_analytic, compute_exhaust_energy
 )
 
@@ -24,18 +28,18 @@ def eom_retrograde(tau, y, T, thrust_zone=(1.3, 1.8)):
     r, phi, pt, pr, pphi, m = y
     if r < r_safe or m <= 0:
         return [0, 0, 0, 0, 0, 0]
-    
+
     cov, con = metric(r)
     g_tt, g_tphi, g_rr, _, g_phiphi = cov
     gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
-    
+
     u_t = (gu_tt * pt + gu_tphi * pphi) / m
     u_r = gu_rr * pr / m
     u_phi = (gu_tphi * pt + gu_phiphi * pphi) / m
-    
+
     dH_dr = compute_dH_dr_analytic(r, np.pi/2, pt, pr, pphi, m, a, M)
     dpr_geo = -dH_dr / m
-    
+
     # Apply retrograde thrust in extraction zone
     r_min, r_max = thrust_zone
     if r_min <= r <= r_max and m > 0.1:
@@ -44,7 +48,7 @@ def eom_retrograde(tau, y, T, thrust_zone=(1.3, 1.8)):
         s_phi = -1.0 / np.sqrt(g_phiphi)  # Retrograde
         s_r = 0.0  # No radial component
         s_t = 0.0  # Purely spatial in this coordinate gauge
-        
+
         # Thrust adds momentum in thrust direction
         # dp/dtau = T * gamma_e * s (where s is unit spacelike)
         dpt = 0.0  # No change in t-momentum from purely spatial thrust
@@ -56,14 +60,14 @@ def eom_retrograde(tau, y, T, thrust_zone=(1.3, 1.8)):
         dpr = dpr_geo
         dpphi = 0.0
         dm = 0.0
-    
+
     return [u_r, u_phi, dpt, dpr, dpphi, dm]
 
 def run_simulation(E0, Lz0, T=0.05, r0=10.0, thrust_zone=(1.3, 1.8)):
     """Run the simulation with given initial conditions."""
     _, con0 = metric(r0)
     gu_tt0, gu_tphi0, gu_rr0, _, gu_phiphi0 = con0
-    
+
     pt0 = -E0
     pphi0 = Lz0
     rhs = -(gu_tt0 * pt0**2 + 2 * gu_tphi0 * pt0 * pphi0 + gu_phiphi0 * pphi0**2 + 1.0)
@@ -71,12 +75,12 @@ def run_simulation(E0, Lz0, T=0.05, r0=10.0, thrust_zone=(1.3, 1.8)):
         return None
     pr0 = -np.sqrt(rhs / gu_rr0)
     y0 = [r0, 0.0, pt0, pr0, pphi0, 1.0]
-    
+
     def event_cap(t, y):
         return y[0] - r_safe
     event_cap.terminal = True
     event_cap.direction = -1
-    
+
     def event_esc(t, y):
         """Escape: r > ESCAPE_RADIUS, pr > 0, AND E/m > 1 (unbound)."""
         r, _, pt, pr, _, m = y
@@ -88,31 +92,31 @@ def run_simulation(E0, Lz0, T=0.05, r0=10.0, thrust_zone=(1.3, 1.8)):
         return r - ESCAPE_RADIUS
     event_esc.terminal = True
     event_esc.direction = 1
-    
+
     sol = solve_ivp(
-        lambda t, y: eom_retrograde(t, y, T, thrust_zone), 
-        [0, 500], y0, 
-        method='RK45', 
+        lambda t, y: eom_retrograde(t, y, T, thrust_zone),
+        [0, 500], y0,
+        method='RK45',
         events=[event_cap, event_esc],
         rtol=1e-8, atol=1e-10, max_step=0.2
     )
-    
+
     r_traj = sol.y[0]
     m_traj = sol.y[5]
     pt_traj = sol.y[2]
     pphi_traj = sol.y[4]
-    
+
     r_min = np.min(r_traj)
     m_final = m_traj[-1]
     E_final = -pt_traj[-1]
-    
+
     if len(sol.t_events[0]) > 0:
         status = 'CAPTURED'
     elif len(sol.t_events[1]) > 0:
         status = 'ESCAPED'
     else:
         status = 'TIMEOUT'
-    
+
     # Check E_ex at a point in the extraction zone
     idx = np.argmin(r_traj)
     r_sample = r_traj[idx]
@@ -120,24 +124,24 @@ def run_simulation(E0, Lz0, T=0.05, r0=10.0, thrust_zone=(1.3, 1.8)):
         cov, con = metric(r_sample)
         g_tt, g_tphi, g_rr, _, g_phiphi = cov
         gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
-        
+
         m_sample = m_traj[idx]
         pt_sample = pt_traj[idx]
         pphi_sample = pphi_traj[idx]
         pr_sample = sol.y[3, idx]
-        
+
         u_t = (gu_tt * pt_sample + gu_tphi * pphi_sample) / m_sample
         u_r = gu_rr * pr_sample / m_sample
         u_phi = (gu_tphi * pt_sample + gu_phiphi * pphi_sample) / m_sample
-        
+
         s_phi = -1.0 / np.sqrt(g_phiphi)
         u_vec = np.array([u_t, u_r, u_phi])
         s_vec = np.array([0.0, 0.0, s_phi])
-        
+
         E_ex, _ = compute_exhaust_energy(u_vec, s_vec, ve, g_tt, g_tphi, g_phiphi)
     else:
         E_ex = None
-    
+
     return {
         'status': status,
         'r_min': r_min,
@@ -148,19 +152,33 @@ def run_simulation(E0, Lz0, T=0.05, r0=10.0, thrust_zone=(1.3, 1.8)):
         'E_ex_at_peri': E_ex
     }
 
+
+def test_retrograde_extraction():
+    """Retrograde thrust in the ergosphere should produce E_ex < 0 (Penrose condition)."""
+    result = run_simulation(1.20, 3.0, T=0.05, thrust_zone=(1.35, 1.8))
+    assert result is not None, "run_simulation returned None -- invalid initial conditions"
+    # The periapsis should be inside the ergosphere (r < 2.0M for a=0.95)
+    # and the thrust zone should overlap with it, so E_ex should be computed.
+    if result['E_ex_at_peri'] is not None:
+        assert result['E_ex_at_peri'] < 0, (
+            f"Expected E_ex < 0 (Penrose condition) at periapsis inside ergosphere, "
+            f"but got E_ex={result['E_ex_at_peri']:.6f}"
+        )
+
+
 if __name__ == '__main__':
     print("Testing continuous RETROGRADE thrust")
     print("=" * 60)
     print(f"Parameters: a={a}, v_e={ve}, r+={r_plus:.4f}M, r_safe={r_safe:.4f}M")
     print()
-    
+
     # Test with parameters from single_thrust_case
     candidates = [
         (1.20, 3.0, 0.05, (1.35, 1.8)),
         (1.20, 3.0, 0.1, (1.35, 1.8)),
         (1.15, 2.8, 0.05, (1.35, 1.8)),
     ]
-    
+
     for E0, Lz0, T, zone in candidates:
         print(f"E0={E0:.2f}, Lz={Lz0:.1f}, T={T}, zone={zone}")
         result = run_simulation(E0, Lz0, T=T, thrust_zone=zone)
@@ -174,3 +192,8 @@ if __name__ == '__main__':
         else:
             print(f"  Invalid initial conditions")
         print()
+
+    print("Running assertions...")
+    test_retrograde_extraction()
+    print("  test_retrograde_extraction: PASSED")
+    print("All tests passed.")
