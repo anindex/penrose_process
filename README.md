@@ -6,15 +6,16 @@ Numerical study of energy extraction from rotating (Kerr) black holes via the Pe
 
 ## Results
 
-Through **252,000 trajectory simulations** (112,000 main experimental phases + 140,000 spin-threshold characterization), we establish:
+Through **320,000 trajectory simulations** (104,000 main experimental phases + 140,000 spin-threshold characterization + 76,000 velocity/ultra-relativistic sweeps), we establish:
 
 | Finding | Value |
 |---------|-------|
 | Broad-scan success rate ($a/M = 0.95$) | ~1% |
-| Sweet-spot success rate ($a/M \geq 0.95$) | 11--14% |
-| Peak success rate ($v_e = 0.98c$, $\delta m = 0.4$) | ~88.5% |
+| Focused sweet-spot success rate ($a/M = 0.95$, grid) | ~14% |
+| Peak success rate ($a/M = 0.99$, $v_e = 0.98c$, Gaussian prior) | 86.3% (exploratory, reused ensemble; see Appendix B) |
+| Peak success rate ($a/M = 0.95$, $v_e = 0.98c$, Gaussian prior) | 69.6% |
 | Critical spin threshold | $0.88 < a_{\rm crit}/M \lesssim 0.89$ |
-| Single-impulse efficiency | $\eta_{\rm cum} \approx 19\%$ |
+| Single-impulse efficiency | $\eta_{\rm cum} \approx 5.7\%$ ($\Delta E/\delta\mu \approx 20\%$) |
 | Continuous thrust efficiency | 2--4% |
 
 **Sweet spot parameters:** specific energy $E_0 \approx 1.2$, specific angular momentum $L_z \approx 3.0$, $v_e \gtrsim 0.91c$
@@ -24,14 +25,14 @@ Through **252,000 trajectory simulations** (112,000 main experimental phases + 1
 ## Visualizations
 
 ### Single Impulse Thrust
-A single impulsive burn at periapsis achieves maximum efficiency (~19%) by concentrating all thrust at the point of minimum exhaust energy.
+A single impulsive burn at periapsis achieves maximum efficiency ($\eta_{\rm cum} \approx 5.7\%$, or $\sim$20% per exhaust rest mass) by concentrating all thrust at the point of minimum exhaust energy.
 
 ![Single Impulse Penrose Extraction](visualizations/single_penrose.gif)
 
 ### Continuous Thrust
 Sustained thrust throughout the ergosphere passage demonstrates path-averaging effects that reduce efficiency to 2--4%.
 
-![Continuous Penrose Extraction](visualizations/continuous_penrose.gif)
+![Rocket-Driven Penrose Extraction (Continuous Thrust)](visualizations/continuous_penrose.gif)
 
 ---
 
@@ -181,7 +182,7 @@ Options for `regenerate_sweep_data.py`:
 | Figure | File | Description |
 |--------|------|-------------|
 | 1 | `fig1_orbit_classification.pdf` | Orbit classification in $(E_0, L_z)$ space |
-| 2 | `fig2_ensemble_statistics.pdf` | Penrose success rate vs spin |
+| 2 | `fig2_ensemble_statistics.pdf` | Extraction-with-escape rate vs spin |
 | 3 | `fig3_thrust_comparison.pdf` | Single-impulse vs continuous thrust |
 | 4 | `fig4_spin_dependence.pdf` | Spin dependence of extraction window |
 | 5 | `fig5_thrust_sensitivity.pdf` | Velocity phase transition at $v_e \approx 0.91c$ |
@@ -191,19 +192,16 @@ Options for `regenerate_sweep_data.py`:
 
 ## Numerical Configuration
 
-The continuous thrust integrator uses classical RK4 with mass-shell projection. For geodesic phases, the recommended solver settings are:
+The continuous thrust integrator uses classical RK4 with mass-shell projection. Two tolerance levels are used:
 
+**Parameter sweeps** (Tables I--VI, Figures 5--6):
 ```python
-from scipy.integrate import solve_ivp
+solve_ivp(..., method='DOP853', rtol=1e-9, atol=1e-11)
+```
 
-solution = solve_ivp(
-    geodesic_rhs,
-    t_span=(0, tau_max),
-    y0=initial_state,
-    method='DOP853',      # 8th-order Dormand-Prince
-    rtol=1e-10,
-    atol=1e-12,
-)
+**Single-trajectory analysis** (Table IV, Figure 3):
+```python
+solve_ivp(..., method='DOP853', rtol=1e-10, atol=1e-12)
 ```
 
 Initial conditions: $r_0 = 15M$, escape radius: $50M$

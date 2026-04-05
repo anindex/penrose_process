@@ -588,7 +588,7 @@ def animate_continuous_thrust(config: SimulationConfig,
     ax_traj.set_aspect('equal')
     ax_traj.set_xlabel(r'$x/M$')
     ax_traj.set_ylabel(r'$y/M$')
-    ax_traj.set_title(f'Continuous Thrust Penrose Extraction\n$a/M = {config.a}$, $T_{{max}} = {config.T_max}$')
+    ax_traj.set_title(f'Rocket-Driven Penrose Extraction (Continuous Thrust)\n$a/M = {config.a}$, $T_{{max}} = {config.T_max}$')
     
     # Energy axis
     ax_energy.set_xlim(0, tau[-1])
@@ -1108,7 +1108,7 @@ def animate_continuous_from_case(output_path: str = "results/animations/continuo
         dE_current = E[idx] - E0
         dm_current = m[idx] - m[0]
         title_text.set_text(
-            f'Continuous Penrose Extraction (a={a:.2f}M)\n'
+            f'Rocket-Driven Penrose Extraction (a={a:.2f}M)\n'
             f'tau = {tau[idx]:.1f}M  |  r = {r[idx]:.2f}M  |  DeltaE = {dE_current:+.4f}  |  Deltam = {dm_current:+.3f}'
         )
         

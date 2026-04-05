@@ -43,6 +43,7 @@ from .trajectory_classifier import (
     compute_effective_potential,
     find_turning_points,
     compute_key_radii_vs_spin,
+    is_penrose_success,
     SPIN_VALUES,
 )
 

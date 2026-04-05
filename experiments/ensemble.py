@@ -23,7 +23,8 @@ import json
 from pathlib import Path
 
 from experiments.trajectory_classifier import (
-    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult
+    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult,
+    is_penrose_success,
 )
 from experiments.thrust_comparison import (
     SimulationConfig, simulate_geodesic, simulate_single_impulse, simulate_burst
@@ -310,37 +311,45 @@ def compute_confidence_intervals(ensemble_result: 'EnsembleResult',
     n_integration_failure = sum(1 for r in results 
                                  if r.outcome == TrajectoryOutcome.INTEGRATION_FAILURE)
     
-    # Genuine Penrose: escape with >50% thrust at E_ex < 0
+    # Genuine Penrose: canonical criterion (paper Eq. 20)
     escaped = [r for r in results if r.outcome == TrajectoryOutcome.ESCAPE]
-    n_genuine_penrose = sum(1 for r in escaped if r.penrose_fraction > 0.5)
+    n_genuine_penrose = sum(1 for r in escaped if is_penrose_success(r))
     
     ci_results = {}
     
     # Escape probability (Clopper-Pearson)
-    # Two versions: excluding and including integration failures
+    # Two versions: excluding and including integration failures.
+    #
+    # CANONICAL for paper: 'escape_probability_conservative' (the _robust key)
+    # counts integration failures as non-escapes, matching the paper's
+    # conservative convention (Sec. IV.D, Tables I-V).  The _excl variant
+    # is retained for Table VII's P1 column (failures excluded from denominator).
     p_escape_excl = n_escape / n_valid if n_valid > 0 else 0
     ci_escape_excl = clopper_pearson_ci(n_escape, n_valid, alpha)
-    
+
     p_escape_incl = n_escape / n_total if n_total > 0 else 0
     ci_escape_incl = clopper_pearson_ci(n_escape, n_total, alpha)
-    
+
     ci_results['escape_probability'] = {
         'point': p_escape_excl,
         'lower': ci_escape_excl[0],
         'upper': ci_escape_excl[1],
         'n_success': n_escape,
         'n_trials': n_valid,
-        'method': 'Clopper-Pearson (excluding integration failures)',
+        'method': 'Clopper-Pearson (excluding integration failures) [Table VII P1]',
     }
-    
-    ci_results['escape_probability_robust'] = {
+
+    ci_results['escape_probability_conservative'] = {
         'point': p_escape_incl,
         'lower': ci_escape_incl[0],
         'upper': ci_escape_incl[1],
         'n_success': n_escape,
         'n_trials': n_total,
-        'method': 'Clopper-Pearson (including failures as non-escapes)',
+        'method': 'Clopper-Pearson (failures as non-escapes, conservative) [Tables I-V canonical]',
     }
+
+    # Backward-compatible alias
+    ci_results['escape_probability_robust'] = ci_results['escape_probability_conservative']
     
     # Genuine Penrose fraction among escapes
     if len(escaped) > 0:
@@ -564,9 +573,8 @@ class EnsembleResult:
                            if r.outcome == TrajectoryOutcome.ESCAPE)
         self.n_capture = sum(1 for r in self.results 
                             if r.outcome == TrajectoryOutcome.CAPTURE)
-        self.n_penrose = sum(1 for r in self.results 
-                            if r.outcome == TrajectoryOutcome.ESCAPE 
-                            and r.penrose_fraction > 0.5)
+        self.n_penrose = sum(1 for r in self.results
+                            if is_penrose_success(r))
         
         # Probabilities
         self.escape_probability = self.n_escape / self.n_total
@@ -580,6 +588,8 @@ class EnsembleResult:
             self.Delta_E_std = np.std(Delta_E_vals, ddof=1) if len(Delta_E_vals) > 1 else 0.0
             self.Delta_E_median = np.median(Delta_E_vals)
             
+            # eta > 0: for successful Penrose (DeltaE>0, Delta_m>0), eta is
+            # always positive; non-positive values are numerical artifacts.
             eta_vals = [r.eta_cumulative for r in escaped if r.eta_cumulative > 0]
             if eta_vals:
                 self.eta_cum_mean = np.mean(eta_vals)

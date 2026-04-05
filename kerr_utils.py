@@ -14,6 +14,7 @@ References:
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
 
 # =============================================================================
 # PLOTTING
@@ -118,7 +119,7 @@ def kerr_metric_components(r, th, a, M=1.0, clamp_horizon=True, warn_horizon=Tru
                     f"Clamping to Delta=tiny for numerical stability, but results are unphysical.",
                     RuntimeWarning
                 )
-            Delta = np.finfo(float).tiny
+            Delta = 1e-12  # physically motivated floor; finfo.tiny overflows 1/Delta
         else:
             raise ValueError(
                 f"Horizon crossing detected: r={r:.6f}M < r_+={r_plus:.6f}M (Delta={Delta:.6e}). "
@@ -159,18 +160,22 @@ def compute_pt_from_mass_shell(r, th, pr, pphi, m, a, M=1.0,
                                 warn_forbidden=True, raise_on_forbidden=False):
     """
     Solve mass-shell constraint g^{munu} p_mu p_nu = -m^2 for p_t.
-    
+
+    **Equatorial-plane only (p_theta = 0).**  The g^{theta theta} p_theta^2
+    term is omitted from the quadratic, so this solver is valid only when
+    the trajectory is confined to the equatorial plane (th = pi/2).
+
     Sign convention:
     - p_t < 0 for positive-energy particles (future-directed)
     - E = -p_t is the Killing energy at infinity
     - For massive particles outside the horizon, E > 0
-    
+
     Parameters
     ----------
     r, th : float
-        Boyer-Lindquist coordinates
+        Boyer-Lindquist coordinates (th should be pi/2 for equatorial motion)
     pr, pphi : float
-        Covariant momentum components p_r, p_phi
+        Covariant momentum components p_r, p_phi (p_theta assumed zero)
     m : float
         Rest mass (must be > 0 for massive particles)
     a, M : float
@@ -240,7 +245,7 @@ def max_rotational_energy_fraction(a_spin, M_bh=1.0):
     For a=M (extremal): ~29.3%
     
     This is DIFFERENT from Wald's single-decay limit (~20.7% for extremal Kerr),
-    which bounds the energy gain from a single particle fragmentation event.
+    which is the classical benchmark for the energy gain from a single particle fragmentation event.
     
     Reference: Christodoulou (1970), Phys. Rev. Lett. 25, 1596
     """
@@ -260,9 +265,9 @@ def wald_single_decay_limit():
     approximately 20.7%. This assumes optimal kinematics and that the
     negative-energy fragment falls into the hole.
     
-    This limit applies to SINGLE EVENTS, not cumulative processes.
-    A rocket executing multiple thrust burns can exceed this per-burn
-    by utilizing multiple extraction events.
+    This is a classical single-decay benchmark, not a strict upper bound
+    on the controlled rocket setup. A rocket executing multiple thrust
+    burns can exceed this per-burn by utilizing multiple extraction events.
     
     Reference: Wald (1974), ApJ 191, 231
     """
@@ -276,7 +281,7 @@ def theoretical_penrose_limit(a_spin, M_bh=1.0):
     
     Use max_rotational_energy_fraction() for the BH's total extractable
     rotational energy, or wald_single_decay_limit() for the single-event
-    efficiency bound.
+    efficiency benchmark.
     
     Currently returns max_rotational_energy_fraction for backward compatibility.
     """
@@ -297,6 +302,18 @@ def compute_cumulative_efficiency(E_initial, E_final, m_initial, m_final):
     if delta_m <= 0:
         return 0.0
     return (E_final - E_initial) / delta_m
+
+
+def compute_traditional_efficiency(E_initial, E_final):
+    """Traditional Penrose efficiency: (E_f - E_0) / E_0.
+
+    Analogous to the single-decay efficiency used for the classical Penrose
+    process. Measures fractional energy gain relative to initial energy.
+    Comparable to Wald's bound eta_Wald ~ 20.7% for extremal Kerr.
+    """
+    if E_initial <= 0:
+        return 0.0
+    return (E_final - E_initial) / E_initial
 
 
 def print_efficiency_analysis(tau, E, m, r, a_spin, M_bh=1.0):
@@ -430,84 +447,82 @@ def frame_dragging_omega(r, a, M=1.0, th=np.pi/2):
 def integrate_exhaust_geodesic(r0, th0, u_ex_contra, a, M=1.0, tau_max=50.0, 
                                  r_horizon_margin=0.01, n_steps=1000):
     """
-    Integrate exhaust geodesic to verify horizon capture.
+    Integrate exhaust geodesic to verify horizon capture using DOP853.
     
     For E_ex < 0 exhaust, this verifies it falls into the black hole.
+    Uses SciPy's DOP853 (8th-order Dormand-Prince) integrator with terminal
+    events for horizon crossing and escape, matching the main parameter-sweep
+    solver family.
+    
     Returns dict with 'captured', 'escaped', 'r_final', 'trajectory'.
     """
     r_plus = horizon_radius(a, M)
     r_capture = r_plus + r_horizon_margin
     
-    # Get initial covariant momentum (for massless or unit-mass particle)
-    # p_mu = g_munu u^nu
+    # Get initial covariant momentum: p_mu = g_{mu nu} u^nu
     cov, con = kerr_metric_components(r0, th0, a, M)
     g_tt, g_tphi, g_rr, _, g_phiphi = cov
-    gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
     
     u_t, u_r, u_phi = u_ex_contra
     pt = g_tt * u_t + g_tphi * u_phi
-    pr = g_rr * u_r
+    pr0 = g_rr * u_r
     pphi = g_tphi * u_t + g_phiphi * u_phi
     
-    # For geodesic integration, use m=1 (can normalize later if needed)
+    # Unit mass for geodesic integration
     m = 1.0
     
-    # Simple Euler integration (sufficient for capture/escape check)
-    tau_arr = [0.0]
-    r_arr = [r0]
+    # Conserved quantities (Killing vectors): pt, pphi are constants along geodesic
+    # State vector: [r, pr] (th=th0 fixed equatorial, phi not needed for capture check)
     
-    state = [r0, th0, 0.0, pr]  # [r, th, phi, pr]
-    tau = 0.0
-    dt = tau_max / n_steps
-    
-    for _ in range(n_steps):
-        r, th, phi, pr = state
-        
-        if r < r_capture:
-            break  # Captured
-        if r > 100.0 * M:
-            break  # Escaped
-            
-        # Get metric
+    def rhs(tau, y):
+        r, pr = y
+        if r < r_plus * 0.99:
+            return [0.0, 0.0]
         try:
-            cov, con = kerr_metric_components(r, th, a, M)
-        except:
-            break
-        g_tt, g_tphi, g_rr, _, g_phiphi = cov
-        gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
+            _, con_ = kerr_metric_components(r, th0, a, M)
+        except Exception:
+            return [0.0, 0.0]
+        gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con_
         
-        # Compute dr/dtau from pr
+        # dr/dtau = g^{rr} p_r / m
         dr = gu_rr * pr / m
         
-        # Compute dpr/dtau from Hamiltonian (finite differences for simplicity)
-        eps = 1e-6 * max(1.0, abs(r))
-        def H_at_r(r_):
-            try:
-                _, con_ = kerr_metric_components(r_, th, a, M)
-                gu_tt_, gu_tphi_, gu_rr_, _, gu_phiphi_ = con_
-                return 0.5*(gu_tt_*pt**2 + gu_rr_*pr**2 + gu_phiphi_*pphi**2 + 2*gu_tphi_*pt*pphi)
-            except:
-                return 0.0
-        dH_dr = (H_at_r(r + eps) - H_at_r(r - eps)) / (2*eps)
-        dpr = -dH_dr / m  # Proper time parameterization
+        # dp_r/dtau from Hamiltonian: dp_r/dtau = -(1/m) dH/dr
+        # Use analytic derivatives (faster and more accurate than finite differences)
+        dH_dr = compute_dH_dr_analytic(r, th0, pt, pr, pphi, m, a, M)
+        dpr = -dH_dr / m
         
-        # Simple Euler step (sufficient for capture check)
-        state = [r + dr*dt, th, phi, pr + dpr*dt]
-        tau += dt
-        
-        tau_arr.append(tau)
-        r_arr.append(state[0])
+        return [dr, dpr]
     
-    r_final = state[0]
-    r_min = min(r_arr)
+    # Terminal events
+    def event_capture(tau, y):
+        return y[0] - r_capture
+    event_capture.terminal = True
+    event_capture.direction = -1  # trigger when r crosses r_capture going inward
+    
+    def event_escape(tau, y):
+        return y[0] - 100.0 * M
+    event_escape.terminal = True
+    event_escape.direction = 1  # trigger when r crosses 100M going outward
+    
+    y0 = [r0, pr0]
+    
+    sol = solve_ivp(rhs, [0.0, tau_max], y0, method='DOP853',
+                    events=[event_capture, event_escape],
+                    rtol=1e-9, atol=1e-11, max_step=tau_max / 100,
+                    dense_output=True)
+    
+    r_final = sol.y[0, -1] if sol.y.shape[1] > 0 else r0
+    r_min = float(np.min(sol.y[0])) if sol.y.shape[1] > 0 else r0
+    tau_final = sol.t[-1] if len(sol.t) > 0 else 0.0
     
     return {
         'captured': r_final < r_capture,
         'escaped': r_final > 50.0 * M,
-        'r_final': r_final,
-        'tau_final': tau,
+        'r_final': float(r_final),
+        'tau_final': float(tau_final),
         'r_min': r_min,
-        'trajectory': (np.array(tau_arr), np.array(r_arr))
+        'trajectory': (sol.t, sol.y[0])
     }
 
 
@@ -629,7 +644,7 @@ def kerr_metric_derivatives(r, th, a, M=1.0):
     
     # Avoid division by zero near horizon
     if Delta <= 0:
-        Delta = np.finfo(float).tiny
+        Delta = 1e-12  # physically motivated floor; finfo.tiny overflows 1/Delta
     
     # Derivatives of Sigma and Delta
     dSigma_dr = 2*r  # At equator

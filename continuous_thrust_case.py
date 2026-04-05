@@ -66,7 +66,7 @@ USE_EXACT_MOMENTUM_CONSERVATION = True  # NEW: use exact 4-momentum conservation
 
 # Integration timestep - SINGLE SOURCE OF TRUTH
 # This must be used by both the integrator and energy budget calculations
-DT_INTEGRATION = 0.005  # Euler step size for proper time tau
+DT_INTEGRATION = 0.005  # RK4 step size for proper time tau
 
 # NEW: Toggle between "capture" mode (deep dive, higher efficiency but captured)
 #      and "escape" mode (shallower orbit, lower efficiency but escapes)
@@ -148,13 +148,13 @@ if USE_NEAR_EXTREMAL_PARAMS:
         # Key insight: Need periapsis inside extraction zone (~1.7M) but not too deep
         E0 = 1.25        # higher energy for stronger escape
         Lz0 = 3.1        # slightly lower Lz for deeper periapsis ~1.55M
-        r0 = 10.0        # starting radius
+        r0 = 15.0        # initial radius (paper: r_0 = 15M)
         a_max = 0.15     # lower thrust to avoid angular momentum loss leading to capture
     else:
         # CAPTURE MODE: Lower Lz for deeper periapsis - maximum E_ex < 0 but captured
         E0 = 1.20        # unbound (E > 1)
         Lz0 = 2.8        # lower Lz for deeper periapsis (~1.45M)
-        r0 = 10.0        # starting radius
+        r0 = 15.0        # initial radius (paper: r_0 = 15M)
 else:
     # Lower energy prograde config (fallback)
     E0 = 1.10
@@ -426,7 +426,7 @@ def dynamics_continuous(tau, y):
         dH_dr = (Hp - Hm) / (2.0 * eps)
 
     dpt = 0.0
-    dpr = -dH_dr / m  # FIXED: Added 1/m factor for proper time evolution
+    dpr = -dH_dr / m  # Hamilton's eq: dp_r/dtau = -(1/m) dH/dr for proper-time parametrization
     dpphi = 0.0
     dm = 0.0
 
@@ -472,7 +472,7 @@ def dynamics_continuous(tau, y):
         a_prop = a_max * throttle_level
         
         # ======================================================================
-        # EXACT 4-MOMENTUM CONSERVATION (CRITICAL FIX)
+        # EXACT 4-MOMENTUM CONSERVATION
         # ======================================================================
         # 
         # Instead of the approximate: thrust = m * a_prop, dm = -thrust/v_exhaust
@@ -773,15 +773,16 @@ escape_event.direction = -1
 
 def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
     """
-    Euler integrator with explicit constraint projection.
+    Classical RK4 integrator with explicit constraint projection.
     
     Returns (T, Y, termination_reason) where termination_reason is
     'escape', 'horizon', 'mass', or 'timeout'.
     
     NUMERICAL METHOD NOTES:
     -----------------------
-    This uses explicit Euler with mass-shell projection after each step.
-    The projection modifies p_r to satisfy g^{munu}p_mup_nu + m^2 = 0.
+    This uses classical fourth-order Runge-Kutta (RK4) with mass-shell
+    projection after each step. The projection modifies p_r to satisfy
+    g^{munu}p_mup_nu + m^2 = 0.
     
     IMPORTANT CAVEATS:
     1. The thrust law uses EXACT differential 4-momentum conservation:
@@ -797,9 +798,9 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
        - The thrust update to p_t is exact: dp_t = -(dmu/dtau) * u_{ex,t}
        - Thus DeltaE_rocket + Sum E_ex*deltamu ~ 0 to machine precision
     
-    4. TRAJECTORY ACCURACY is O(dt^2) due to Euler truncation plus projection
-       artifacts. The path (periapsis, time in extraction zone) can shift
-       with dt. For quantitative claims, verify step-size convergence.
+    4. TRAJECTORY ACCURACY is O(dt^4) per step due to RK4 truncation plus
+       projection artifacts. The path (periapsis, time in extraction zone)
+       can shift with dt. For quantitative claims, verify step-size convergence.
     
     ALTERNATIVES:
     - solve_ivp with Radau (as in single_thrust_case.py) for implicit RK
@@ -901,8 +902,7 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
             T.append(tau)
             Y.append(y.copy())
 
-    # CRITICAL FIX: Always append the terminal state for consistent diagnostics
-    # This ensures energy budgets and final-state analysis use the actual end state
+    # Append the terminal state so energy budgets and final-state analysis use the actual end state
     if len(T) == 0 or tau != T[-1]:
         T.append(tau)
         Y.append(y.copy())

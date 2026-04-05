@@ -33,8 +33,8 @@ class OrbitProfile(Enum):
     
     Based on effective potential analysis in the equatorial plane.
     """
-    FLYBY_DEEP_ERGOSPHERE = auto()    # Periapsis in extraction zone (r < 0.85*r_erg)
-    FLYBY_SHALLOW_ERGOSPHERE = auto() # Periapsis in ergosphere but outside extraction zone
+    FLYBY_DEEP_ERGOSPHERE = auto()    # Periapsis in deep-ergosphere diagnostic region (r < 0.85*r_erg)
+    FLYBY_SHALLOW_ERGOSPHERE = auto() # Periapsis in ergosphere but outside diagnostic region
     FLYBY_OUTSIDE_ERGOSPHERE = auto() # Periapsis outside ergosphere
     BOUND_STABLE = auto()              # Stable bound orbit (E < 1, above ISCO)
     BOUND_UNSTABLE = auto()            # Unstable bound orbit (between ISCO and horizon)
@@ -142,17 +142,39 @@ class TrajectoryResult:
     trajectory_data: Optional[Dict[str, np.ndarray]] = None
 
 
+def is_penrose_success(result: TrajectoryResult) -> bool:
+    """
+    Canonical Penrose extraction success criterion (paper Eq. 20).
+
+    S := (DeltaE > 0) AND (spacecraft escapes to infinity)
+
+    For single-impulse burns this is equivalent to E_ex < 0 AND escape,
+    because a negative-energy exhaust captured by the hole necessarily
+    increases the spacecraft's Killing energy.  The DeltaE > 0 form is
+    preferred because it generalises cleanly to multi-burn and
+    continuous-thrust trajectories.
+    """
+    if result.outcome != TrajectoryOutcome.ESCAPE:
+        return False
+    if result.Delta_E is None or not np.isfinite(result.Delta_E):
+        return False
+    return result.Delta_E > 0
+
+
 # =============================================================================
 # EFFECTIVE POTENTIAL FUNCTIONS
 # =============================================================================
 
-def compute_effective_potential(E: float, Lz: float, r: float, 
+def compute_effective_potential(E: float, Lz: float, r: float,
                                   a: float, M: float = 1.0) -> float:
     """
     Compute effective potential for radial motion at equator.
-    
-    For timelike geodesics: p_r^2 = -g^rr * V_eff(r)
-    
+
+    Defines V_eff so that radial motion is allowed where V_eff < 0.
+    From the mass-shell constraint: g^{rr} p_r^2 = -V_eff, i.e.
+    p_r^2 = -V_eff / g^{rr}.  Since g^{rr} > 0 outside the horizon,
+    V_eff < 0 ⇔ p_r^2 > 0 (motion allowed).
+
     V_eff < 0 means motion is allowed (p_r^2 > 0)
     V_eff = 0 is a turning point
     V_eff > 0 is classically forbidden
@@ -253,7 +275,7 @@ def classify_orbit(E: float, Lz: float, a: float, M: float = 1.0,
     a, M : float
         Black hole parameters
     extraction_zone_factor : float
-        Fraction of ergosphere radius defining "deep" extraction zone.
+        Fraction of ergosphere radius defining "deep" diagnostic region.
         Default 0.85 means r < 0.85 * r_erg is considered deep.
         
     Returns

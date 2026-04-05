@@ -29,7 +29,8 @@ import multiprocessing
 import warnings
 
 from experiments.trajectory_classifier import (
-    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult
+    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult,
+    is_penrose_success,
 )
 from experiments.thrust_comparison import (
     SimulationConfig, simulate_single_impulse, simulate_geodesic
@@ -89,6 +90,11 @@ class ComprehensiveSweepConfig:
     
     # Random seed for reproducibility
     seed: int = 42
+
+    # If True, each (v_e, delta_m) config in Phase 3 gets a distinct seed
+    # derived from the base seed. Prevents the reused-ensemble issue
+    # described in Appendix B (identical samples across delta_m values).
+    independent_seeds: bool = True
     
     def __post_init__(self):
         """Compute derived quantities."""
@@ -134,8 +140,7 @@ def run_single_config(params: Dict) -> Dict:
         'delta_m': delta_m,
         'outcome': result.outcome.name,
         'is_escape': result.outcome == TrajectoryOutcome.ESCAPE,
-        'is_penrose': (result.outcome == TrajectoryOutcome.ESCAPE and
-                       result.penrose_fraction > 0.5),
+        'is_penrose': is_penrose_success(result),
         'Delta_E': result.Delta_E if result.Delta_E is not None else np.nan,
         'E_ex': result.E_ex_mean if result.E_ex_mean is not None else np.nan,
         'eta_cumulative': result.eta_cumulative if result.eta_cumulative is not None else np.nan,
@@ -394,18 +399,29 @@ def run_thrust_parameter_sweep(config: ComprehensiveSweepConfig,
         
         spin_results = {}
         
+        config_index = 0
         for v_e in config.v_e_values:
             for delta_m in config.delta_m_values:
                 t_start = time.time()
-                
-                # Run Monte Carlo ensemble
+
+                # Run Monte Carlo ensemble.
+                # When independent_seeds is True, each (v_e, delta_m) config
+                # gets a distinct seed to avoid the reused-ensemble artifact
+                # (Appendix B).  When False, the original behaviour is
+                # preserved for exact reproduction of exploratory results.
+                if config.independent_seeds:
+                    cfg_seed = config.seed + config_index
+                else:
+                    cfg_seed = config.seed
+                config_index += 1
                 param_list = []
-                rng = np.random.default_rng(config.seed)
+                rng = np.random.default_rng(cfg_seed)
                 
                 for _ in range(config.n_samples_per_config):
-                    # Small perturbations around sweet spot
-                    E0 = E0_sweet + rng.normal(0, 0.02)
-                    Lz0 = Lz0_sweet + rng.normal(0, 0.05)
+                    # Gaussian perturbations around sweet spot
+                    # sigma_E=0.03, sigma_Lz=0.08 as stated in paper Tables V-VI
+                    E0 = E0_sweet + rng.normal(0, 0.03)
+                    Lz0 = Lz0_sweet + rng.normal(0, 0.08)
                     param_list.append({
                         'a': a,
                         'E0': E0,

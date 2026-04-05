@@ -28,7 +28,8 @@ from kerr_utils import (
 )
 from experiments.trajectory_classifier import (
     OrbitProfile, TrajectoryOutcome, ThrustStrategy,
-    classify_orbit, OrbitProperties, TrajectoryResult
+    classify_orbit, OrbitProperties, TrajectoryResult,
+    is_penrose_success,
 )
 
 
@@ -191,8 +192,8 @@ class SweepResult:
         self.n_completed = len(self.results)
         self.n_escape = sum(1 for r in self.results if r.outcome == TrajectoryOutcome.ESCAPE)
         self.n_capture = sum(1 for r in self.results if r.outcome == TrajectoryOutcome.CAPTURE)
-        self.n_penrose = sum(1 for r in self.results 
-                            if r.outcome == TrajectoryOutcome.ESCAPE and r.penrose_fraction > 0.5)
+        self.n_penrose = sum(1 for r in self.results
+                            if is_penrose_success(r))
     
     @property
     def duration(self) -> float:

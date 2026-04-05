@@ -73,7 +73,7 @@ gamma_e = 1.0 / np.sqrt(1.0 - v_e**2)
 # Prograde flyby - periapsis inside ergosphere
 E0 = 1.20        # unbound (E > 1), comes from/escapes to infinity
 Lz0 = 3.0        # positive = prograde, balanced for extraction + escape
-r0 = 10.0        # start moderately far for focused simulation
+r0 = 15.0        # initial radius (paper: r_0 = 15M)
 
 # =============================================================================
 # LOCAL METRIC WRAPPER (uses global a, M)
@@ -141,10 +141,10 @@ def dynamics_freefall(tau, state):
 
 def apply_impulse_exact(state, delta_mu, a_spin, M_bh, v_exhaust, minimize_E_ex=True):
     """
-    Apply an instantaneous thrust impulse with EXACT 4-momentum conservation.
-    
-    This is the CRITICAL fix for energy budget: instead of imposing mass loss
-    and adding momentum changes separately, we use exact 4-momentum conservation:
+    Apply an instantaneous thrust impulse with exact 4-momentum conservation.
+
+    Rather than imposing mass loss and adding momentum changes separately,
+    we use exact 4-momentum conservation:
     
         p'_mu = p_mu - deltamu * u_{ex,mu}
     
@@ -206,7 +206,7 @@ def apply_impulse_exact(state, delta_mu, a_spin, M_bh, v_exhaust, minimize_E_ex=
     best_u_ex_result = None
     best_s_vec = None
     
-    # Also track best option without escape constraint (fallback)
+    # Also track best option without unbound-energy filter (fallback)
     best_E_ex_any = float('inf')
     best_u_ex_result_any = None
     
@@ -225,7 +225,7 @@ def apply_impulse_exact(state, delta_mu, a_spin, M_bh, v_exhaust, minimize_E_ex=
             
             if minimize_E_ex:
                 # For Penrose extraction: minimize E_ex (want E_ex < 0)
-                # Also check escape constraints
+                # Also check unbound-energy filter (E > m_after)
                 u_ex_cov = u_ex_result['u_ex_cov']
                 
                 # Trial momentum after impulse
@@ -516,10 +516,6 @@ for r_trig in radii_scan:
     min_r = min(np.min(sol1.y[0]), np.min(sol2.y[0]))
     min_r_results.append(min_r)
     
-    # Debug first few cases
-    if len(energy_results) < 3:
-        print(f"  r_trig={r_trig:.3f}: min_r={min_r:.3f}, m_final={sol2.y[6,-1]:.4f}, r_final={sol2.y[0,-1]:.4f}")
-    
     if sol2.y[0, -1] < r_plus + 0.1:
         energy_results.append(0.0)  # Fell into BH
         mass_results.append(0.0)
@@ -527,9 +523,6 @@ for r_trig in radii_scan:
         E_final = local_compute_energy(sol2.y[0,-1], np.pi/2, sol2.y[3,-1], sol2.y[5,-1], sol2.y[6,-1])
         energy_results.append(E_final)
         mass_results.append(sol2.y[6,-1])
-
-# Debug: show min radius reached
-print(f"Minimum radius reached: {min(min_r_results):.4f} M (need < {radii_scan[-1]:.4f} to trigger)")
 
 energy_results = np.array(energy_results)
 mass_results = np.array(mass_results)

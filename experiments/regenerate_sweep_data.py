@@ -28,7 +28,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 import warnings
 from experiments.trajectory_classifier import (
-    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult
+    OrbitProfile, TrajectoryOutcome, ThrustStrategy, TrajectoryResult,
+    is_penrose_success,
 )
 from experiments.thrust_comparison import (
     SimulationConfig, simulate_single_impulse
@@ -65,19 +66,18 @@ def run_single_simulation(params: dict) -> dict:
             Lz0=params['Lz0'],
             r0=15.0,
             v_e=params['v_e'],
-            delta_m=params['delta_m'],
-            trigger_mode='periapsis',
+            delta_m_fraction=params['delta_m'],
             tau_max=500.0,
             rtol=1e-9,
             atol=1e-11,
         )
-        
+
         result = simulate_single_impulse(config)
-        
+
         is_escape = result.outcome == TrajectoryOutcome.ESCAPE
-        is_penrose = (result.E_ex_min < 0) and is_escape
-        Delta_E = result.Delta_E if np.isfinite(result.Delta_E) else 0.0
-        eta_cum = result.eta_cum if np.isfinite(result.eta_cum) else 0.0
+        is_penrose = is_penrose_success(result)
+        Delta_E = result.Delta_E if (result.Delta_E is not None and np.isfinite(result.Delta_E)) else float('nan')
+        eta_cum = result.eta_cumulative if (result.eta_cumulative is not None and np.isfinite(result.eta_cumulative)) else float('nan')
         
         return {
             'is_escape': is_escape,
@@ -86,12 +86,15 @@ def run_single_simulation(params: dict) -> dict:
             'eta_cum': eta_cum,
         }
     except Exception as e:
-        # Count failures as non-escape
+        # Count failures as non-escape (conservative convention, paper Sec. IV.D).
+        # Use NaN for numerical fields so they are excluded from averaging.
+        import warnings
+        warnings.warn(f"Simulation failed ({type(e).__name__}: {e}); counted as capture", RuntimeWarning)
         return {
             'is_escape': False,
             'is_penrose': False,
-            'Delta_E': 0.0,
-            'eta_cum': 0.0,
+            'Delta_E': float('nan'),
+            'eta_cum': float('nan'),
         }
 
 
@@ -136,47 +139,49 @@ def generate_fig5_data(n_samples_per_point: int = 500,
         print("GENERATING FIGURE 5 DATA: High-Resolution Velocity Sweep")
         print("="*70)
     
-    # Fixed parameters (sweet spot)
+    # Fixed parameters (sweet spot) — must match paper Tables V-VI and Fig 5 caption
     a = 0.95
-    E0_center = 1.20
-    Lz0_center = 3.0
-    
-    # Parameter variations (small perturbations for Monte Carlo)
-    E_spread = 0.08
-    Lz_spread = 0.3
-    
+    E0_center = 1.22
+    Lz0_center = 3.05
+
+    # Gaussian sampling around sweet spot (paper: sigma_E = 0.03, sigma_Lz = 0.08)
+    sigma_E = 0.03
+    sigma_Lz = 0.08
+
     # Velocity grid: 0.80 to 0.99 in 0.01 increments
     v_e_values = np.arange(0.80, 0.995, 0.01)
     delta_m_values = [0.10, 0.20, 0.30, 0.40]
-    
+
     n_total_simulations = len(v_e_values) * len(delta_m_values) * n_samples_per_point
-    
+
     if verbose:
         print(f"  Velocity range: {v_e_values[0]:.2f}c to {v_e_values[-1]:.2f}c")
         print(f"  Delta_m values: {delta_m_values}")
         print(f"  Samples per point: {n_samples_per_point}")
+        print(f"  Sweet spot: E0={E0_center}, Lz0={Lz0_center}")
+        print(f"  Gaussian sigma: sigma_E={sigma_E}, sigma_Lz={sigma_Lz}")
         print(f"  Total simulations: {n_total_simulations:,}")
         print()
-    
+
     results = {}
     rng = np.random.default_rng(42)
-    
+
     t_start_total = time.time()
-    
+
     for v_e in v_e_values:
         for delta_m in delta_m_values:
             key = f'v_e={v_e:.2f}_dm={delta_m}'
-            
+
             if verbose:
                 print(f"  Running v_e={v_e:.2f}c, delta_m={delta_m}...", end=" ", flush=True)
-            
+
             t_start = time.time()
-            
-            # Generate Monte Carlo samples around sweet spot
+
+            # Generate Gaussian Monte Carlo samples around sweet spot
             param_list = []
             for _ in range(n_samples_per_point):
-                E0 = rng.uniform(E0_center - E_spread, E0_center + E_spread)
-                Lz0 = rng.uniform(Lz0_center - Lz_spread, Lz0_center + Lz_spread)
+                E0 = rng.normal(E0_center, sigma_E)
+                Lz0 = rng.normal(Lz0_center, sigma_Lz)
                 param_list.append({
                     'a': a,
                     'E0': E0,
@@ -197,7 +202,9 @@ def generate_fig5_data(n_samples_per_point: int = 500,
             ci_penrose = clopper_pearson_ci(n_penrose, n_total, 0.05)
             
             # Efficiency statistics (for escaped trajectories)
-            eta_vals = [r['eta_cum'] for r in batch_results if r['is_penrose'] and r['eta_cum'] > 0]
+            # eta_cum > 0: for successful Penrose (DeltaE>0, Delta_m>0), eta is
+            # always positive; non-positive values are numerical artifacts.
+            eta_vals = [r['eta_cum'] for r in batch_results if r['is_penrose'] and np.isfinite(r['eta_cum']) and r['eta_cum'] > 0]
             eta_mean = np.mean(eta_vals) if eta_vals else 0.0
             eta_std = np.std(eta_vals) if len(eta_vals) > 1 else 0.0
             
@@ -256,12 +263,12 @@ def generate_fig6_data(n_samples_per_point: int = 500,
         print("GENERATING FIGURE 6 DATA: Ultra-Relativistic Sweep")
         print("="*70)
     
-    # Fixed parameters (sweet spot)
+    # Fixed parameters (sweet spot) — must match paper Fig 6 caption
     a = 0.95
-    E0_center = 1.20
-    Lz0_center = 3.0
-    E_spread = 0.08
-    Lz_spread = 0.3
+    E0_center = 1.22
+    Lz0_center = 3.05
+    sigma_E = 0.03
+    sigma_Lz = 0.08
     
     # Velocity grid: logarithmic spacing from 0.90c to 0.99999c
     # Covering gamma ~ 2.3 to 224
@@ -300,11 +307,11 @@ def generate_fig6_data(n_samples_per_point: int = 500,
             
             t_start = time.time()
             
-            # Generate Monte Carlo samples
+            # Generate Gaussian Monte Carlo samples around sweet spot
             param_list = []
             for _ in range(n_samples_per_point):
-                E0 = rng.uniform(E0_center - E_spread, E0_center + E_spread)
-                Lz0 = rng.uniform(Lz0_center - Lz_spread, Lz0_center + Lz_spread)
+                E0 = rng.normal(E0_center, sigma_E)
+                Lz0 = rng.normal(Lz0_center, sigma_Lz)
                 param_list.append({
                     'a': a,
                     'E0': E0,
@@ -325,7 +332,9 @@ def generate_fig6_data(n_samples_per_point: int = 500,
             ci_penrose = clopper_pearson_ci(n_penrose, n_total, 0.05)
             
             # Efficiency statistics
-            eta_vals = [r['eta_cum'] for r in batch_results if r['is_penrose'] and r['eta_cum'] > 0]
+            # eta_cum > 0: for successful Penrose (DeltaE>0, Delta_m>0), eta is
+            # always positive; non-positive values are numerical artifacts.
+            eta_vals = [r['eta_cum'] for r in batch_results if r['is_penrose'] and np.isfinite(r['eta_cum']) and r['eta_cum'] > 0]
             eta_mean = np.mean(eta_vals) if eta_vals else 0.0
             eta_std = np.std(eta_vals) if len(eta_vals) > 1 else 0.0
             
@@ -391,22 +400,36 @@ def main():
     print(f"  Mode: {'quick test' if args.quick else 'full'}")
     print()
     
+    # Provenance metadata attached to every saved JSON
+    import sys
+    provenance = {
+        'generated': datetime.now().isoformat(),
+        'python_version': sys.version,
+        'numpy_version': np.__version__,
+        'n_samples_per_point': n_samples,
+        'n_workers': n_workers,
+        'seed': 42,
+        'mode': 'quick' if args.quick else 'full',
+    }
+
     if do_fig5:
         print()
-        fig5_data = generate_fig5_data(n_samples_per_point=n_samples, 
+        fig5_data = generate_fig5_data(n_samples_per_point=n_samples,
                                         n_workers=n_workers)
-        
+        fig5_data['metadata'] = {**provenance, 'figure': 'fig5_highres_sweep'}
+
         # Save to JSON
         output_file = RESULTS_DIR / "fig5_highres_sweep.json"
         with open(output_file, 'w') as f:
             json.dump(fig5_data, f, indent=2)
         print(f"\n  Saved to {output_file}")
-    
+
     if do_fig6:
         print()
         fig6_data = generate_fig6_data(n_samples_per_point=n_samples,
                                         n_workers=n_workers)
-        
+        fig6_data['metadata'] = {**provenance, 'figure': 'fig6_ultrarel_sweep'}
+
         # Save to JSON
         output_file = RESULTS_DIR / "fig6_ultrarel_sweep.json"
         with open(output_file, 'w') as f:
