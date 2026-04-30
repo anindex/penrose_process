@@ -63,13 +63,14 @@ penrose_process/
 |-- continuous_thrust_case.py      # Sustained ergosphere thrust (RK4 integrator)
 |-- pyproject.toml                 # Package configuration
 |-- experiments/
-|   |-- trajectory_classifier.py   # Orbit classification (flyby, plunge, bound)
+|   |-- trajectory_classifier.py   # Orbit classification; `is_penrose_success` (paper Eq. 20)
 |   |-- parameter_sweep.py         # Grid-based parameter exploration
 |   |-- comprehensive_sweep.py     # Full statistical sweeps
 |   |-- thrust_comparison.py       # Strategy comparison (geodesic/impulse/continuous)
 |   |-- ensemble.py                # Monte Carlo analysis with BCa bootstrap CIs
 |   |-- run_trajectory_study.py    # CLI orchestrator
 |   |-- generate_prd_figures.py    # Paper figure generation (6 figures)
+|   |-- generate_all_data.py       # Bulk regeneration
 |   |-- regenerate_sweep_data.py   # Sweep data regeneration
 |   |-- trajectory_visualization.py # Animated GIF generation
 |   |-- phase_space.py             # Phase-space (E, Lz) diagrams
@@ -78,6 +79,7 @@ penrose_process/
 |   |-- test_conservation_laws.py  # Conservation laws and analytical solutions
 |   |-- test_derivatives.py        # Kerr metric derivative validation
 |   |-- test_null_cases.py         # Schwarzschild and outside-ergosphere null tests
+|   |-- test_failure_convention.py # Paper failure counting + NaN convention
 |   |-- test_geodesic.py           # Pure geodesic flyby validation
 |   |-- test_optimal_thrust.py     # Optimal thrust direction test
 |   |-- test_retrograde_thrust.py  # Retrograde exhaust Penrose condition test
@@ -136,12 +138,10 @@ python experiments/trajectory_visualization.py --spin 0.95
 ### Run tests
 
 ```bash
-# Run all tests (requires pip install pytest)
-pytest tests/
-
-# Or run individual test files directly
-python tests/test_conservation_laws.py
-python tests/test_null_cases.py
+# After: pip install -e .  &&  pip install pytest
+python -m pytest tests/ -v --tb=short
+# ~59 tests collected; two modules are long-running (optimal_thrust, retrograde). Fast smoke:
+python -m pytest tests/ -v -k "not optimal_thrust and not retrograde"
 ```
 
 ---
@@ -215,3 +215,14 @@ Initial conditions: $r_0 = 15M$, escape radius: $50M$
 2. R. M. Wald, *Astrophys. J.* **191**, 231 (1974). [doi:10.1086/152959](https://doi.org/10.1086/152959)
 
 3. S. Chandrasekhar, *The Mathematical Theory of Black Holes* (Oxford University Press, 1983).
+
+If you found this repository useful, please consider citing our paper:
+
+```bibtex
+@article{le2026rarity,
+  title={On the rarity of rocket-driven Penrose extraction in Kerr spacetime},
+  author={Le, An T},
+  journal={arXiv preprint arXiv:2601.19616},
+  year={2026}
+}
+```

@@ -32,6 +32,8 @@ References:
 - Wald (1974), ApJ 191, 231 (efficiency limits)
 """
 
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
@@ -51,9 +53,6 @@ from kerr_utils import (
     integrate_exhaust_geodesic, verify_exhaust_capture_batch,
     _inner_prod_tr  # Internal helper for thrust magnitude check
 )
-
-
-setup_prd_style()
 
 
 # =============================================================================
@@ -137,7 +136,7 @@ v_exhaust_momentum = (gamma_e * v_e) if USE_RELATIVISTIC_MASSFLOW else v_e
 # The exhaust velocity is a free parameter bounded only by causality (v_e < c).
 if v_e >= 1.0:
     raise ValueError(f"Exhaust velocity v_e = {v_e} >= c violates causality!")
-if v_e < 0.5:
+if v_e < 0.5 and __name__ == "__main__":
     print(f"WARNING: v_e = {v_e}c may be too low to achieve E_ex < 0 in the ergosphere.")
 
 # Initial orbit - prograde flyby with periapsis inside ergosphere
@@ -211,42 +210,66 @@ R_EXTRACTION_LIMIT = compute_extraction_limit_radius(E0, Lz0, m0, v_e, a, M)
 if R_EXTRACTION_LIMIT is None:
     # Fallback: use a conservative estimate based on ergosphere
     R_EXTRACTION_LIMIT = r_erg_eq * 0.85  # ~1.7M for a=0.95
-    print(f"Warning: Could not compute extraction limit analytically, using fallback: {R_EXTRACTION_LIMIT:.4f} M")
+    if __name__ == "__main__":
+        print(f"Warning: Could not compute extraction limit analytically, using fallback: {R_EXTRACTION_LIMIT:.4f} M")
 else:
-    print(f"Computed extraction limit: R_EXTRACTION_LIMIT = {R_EXTRACTION_LIMIT:.4f} M")
+    if __name__ == "__main__":
+        print(f"Computed extraction limit: R_EXTRACTION_LIMIT = {R_EXTRACTION_LIMIT:.4f} M")
 
 # Mode state machine tracking
 current_thrust_mode = ThrustMode.EXTRACTION
 E_ex_history = []
-delta_mu_history = []  # Track exhaust rest mass per step
+delta_mu_history = []  # Track RK4-weighted exhaust rest mass increments
 r_ex_history = []  # Track radius when E_ex is recorded
+exhaust_sample_history = []  # Actual emitted exhaust states for capture checks
 mode_history = []
 m_reserve_fraction = 0.3  # Reserve 30% fuel for escape
+exhaust_diagnostic_dt_weight = None
 
 # Integral error accumulator for PID controller
 integral_error_r = 0.0
 integral_error_max = 1.0  # Anti-windup limit
 
 # Print configuration summary
-mode_name = "ESCAPE-OPTIMIZED" if USE_ESCAPE_OPTIMIZED else "CAPTURE (deep dive)"
-print("="*65)
-print("         CONTINUOUS PENROSE PROCESS CONFIGURATION")
-print("="*65)
-print(f"  Mode:                    {mode_name}")
-print(f"  Analytic derivatives:    {USE_ANALYTIC_DERIVATIVES}")
-print(f"  Adaptive thrust mode:    {USE_ADAPTIVE_THRUST_MODE}")
-print(f"  Near-extremal params:    {USE_NEAR_EXTREMAL_PARAMS}")
-print(f"  Exact momentum conserv:  {USE_EXACT_MOMENTUM_CONSERVATION}")
-print(f"  Prograde orbit:          True (with retrograde exhaust)")
-print(f"\n  Spin parameter:          a/M = {a:.4f}")
-print(f"  Horizon radius:          r_+ = {r_plus:.4f} M")
-print(f"  Ergosphere (equator):    r_E = {r_erg_eq:.4f} M")
-print(f"  Extraction limit:        r_ex = {R_EXTRACTION_LIMIT:.4f} M")
-print(f"  Operating radius:        r_set = {r_set:.4f} M")
-print(f"  Exhaust velocity:        v_e = {v_e:.3f} c (gamma_e = {gamma_e:.2f})")
-print(f"  Initial orbit:           E_0 = {E0:.3f}, L_z = {Lz0:+.3f}")
-print(f"  Prograde ISCO:           r_ISCO+ = {isco_radius(a, M, prograde=True):.3f} M")
-print("="*65 + "\n")
+def print_configuration_summary():
+    mode_name = "ESCAPE-OPTIMIZED" if USE_ESCAPE_OPTIMIZED else "CAPTURE (deep dive)"
+    print("="*65)
+    print("         CONTINUOUS PENROSE PROCESS CONFIGURATION")
+    print("="*65)
+    print(f"  Mode:                    {mode_name}")
+    print(f"  Analytic derivatives:    {USE_ANALYTIC_DERIVATIVES}")
+    print(f"  Adaptive thrust mode:    {USE_ADAPTIVE_THRUST_MODE}")
+    print(f"  Near-extremal params:    {USE_NEAR_EXTREMAL_PARAMS}")
+    print(f"  Exact momentum conserv:  {USE_EXACT_MOMENTUM_CONSERVATION}")
+    print(f"  Prograde orbit:          True (with retrograde exhaust)")
+    print(f"\n  Spin parameter:          a/M = {a:.4f}")
+    print(f"  Horizon radius:          r_+ = {r_plus:.4f} M")
+    print(f"  Ergosphere (equator):    r_E = {r_erg_eq:.4f} M")
+    print(f"  Extraction limit:        r_ex = {R_EXTRACTION_LIMIT:.4f} M")
+    print(f"  Operating radius:        r_set = {r_set:.4f} M")
+    print(f"  Exhaust velocity:        v_e = {v_e:.3f} c (gamma_e = {gamma_e:.2f})")
+    print(f"  Initial orbit:           E_0 = {E0:.3f}, L_z = {Lz0:+.3f}")
+    print(f"  Prograde ISCO:           r_ISCO+ = {isco_radius(a, M, prograde=True):.3f} M")
+    print("="*65 + "\n")
+
+
+def record_exhaust_diagnostic(E_ex, delta_mu_rate, r, th=np.pi/2, u_ex_contra=None):
+    """Record one exhaust quadrature sample for the energy ledger."""
+    if exhaust_diagnostic_dt_weight is None:
+        delta_mu = delta_mu_rate
+    else:
+        delta_mu = delta_mu_rate * exhaust_diagnostic_dt_weight
+
+    E_ex_history.append(E_ex)
+    delta_mu_history.append(delta_mu)
+    r_ex_history.append(r)
+    if u_ex_contra is not None:
+        exhaust_sample_history.append({
+            "E_ex": E_ex,
+            "r": r,
+            "th": th,
+            "u_ex_contra": np.array(u_ex_contra, dtype=float),
+        })
 
 
 # -----------------------
@@ -641,13 +664,16 @@ def dynamics_continuous(tau, y):
             dpt += best_dpt
             dpr += best_dpr
             dpphi += best_dpphi
-            E_ex_history.append(best_E_ex)
-            # Track exhaust rest mass rate (for exact conservation) or approximate
+            # Record the RK4 quadrature contribution, not a full timestep for
+            # every intermediate stage evaluation.
             if USE_EXACT_MOMENTUM_CONSERVATION:
-                delta_mu_history.append(delta_mu_rate)
+                best_u_ex_contra = (
+                    best_u_ex_result['u_ex_contra']
+                    if best_u_ex_result is not None else None
+                )
+                record_exhaust_diagnostic(best_E_ex, delta_mu_rate, r, th, best_u_ex_contra)
             else:
-                delta_mu_history.append(-dm / gamma_e)  # Approximate
-            r_ex_history.append(r)
+                record_exhaust_diagnostic(best_E_ex, -dm / gamma_e, r, th)
         else:
             # DEFAULT MODE (adaptive mode off): Maximize dE/dtau = -dpt/dtau (greedy energy gain)
             # Note: ESCAPE mode never reaches here since should_thrust=False for ESCAPE
@@ -656,17 +682,21 @@ def dynamics_continuous(tau, y):
                 dpr += dpr_p
                 dpphi += dpphi_p
                 E_ex_val = E_ex_p
+                u_ex_result_val = u_ex_p
             else:
                 dpt += dpt_m
                 dpr += dpr_m
                 dpphi += dpphi_m
                 E_ex_val = E_ex_m
-            E_ex_history.append(E_ex_val)
+                u_ex_result_val = u_ex_m
             if USE_EXACT_MOMENTUM_CONSERVATION:
-                delta_mu_history.append(delta_mu_rate)
+                u_ex_contra = (
+                    u_ex_result_val['u_ex_contra']
+                    if u_ex_result_val is not None else None
+                )
+                record_exhaust_diagnostic(E_ex_val, delta_mu_rate, r, th, u_ex_contra)
             else:
-                delta_mu_history.append(-dm / gamma_e)
-            r_ex_history.append(r)
+                record_exhaust_diagnostic(E_ex_val, -dm / gamma_e, r, th)
 
         # Safety clamp
         if not np.all(np.isfinite([dpt, dpr, dpphi, dm])):
@@ -709,7 +739,8 @@ u_t = p_contra_t/m
 u_phi = p_contra_phi/m
 u_rel_phi = u_phi - omega*u_t
 
-print("omega=", omega, "u_rel_phi=", u_rel_phi, "pphi0=", pphi)
+if __name__ == "__main__":
+    print("omega=", omega, "u_rel_phi=", u_rel_phi, "pphi0=", pphi)
 
 # -----------------------
 # Events: stop if we hit r_safe (near horizon), or if mass depleted
@@ -807,6 +838,8 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
     - RATTLE/SHAKE for systematic constrained integration
     - Lagrange multiplier enforcement
     """
+    global exhaust_diagnostic_dt_weight
+
     dt = DT_INTEGRATION  # Use global constant (single source of truth)
     R_ESCAPE = ESCAPE_RADIUS  # Use global escape radius for definitive escape verification
     
@@ -874,7 +907,9 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
                 termination_reason = 'escape'  # Still far enough to consider escaped
             break
         
-        # Get dynamics and integrate with classical RK4
+        # Get dynamics and integrate with classical RK4. The diagnostic weight
+        # turns each recorded exhaust sample into its accepted RK4 contribution.
+        exhaust_diagnostic_dt_weight = dt / 6.0
         k1 = np.array(dynamics_continuous(tau, y))
 
         # Track last non-zero pr sign for turning point handling
@@ -882,11 +917,15 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
             last_pr_sign = np.sign(y[3])
 
         y2 = y + 0.5 * dt * k1
+        exhaust_diagnostic_dt_weight = dt / 3.0
         k2 = np.array(dynamics_continuous(tau + 0.5 * dt, y2))
         y3 = y + 0.5 * dt * k2
+        exhaust_diagnostic_dt_weight = dt / 3.0
         k3 = np.array(dynamics_continuous(tau + 0.5 * dt, y3))
         y4 = y + dt * k3
+        exhaust_diagnostic_dt_weight = dt / 6.0
         k4 = np.array(dynamics_continuous(tau + dt, y4))
+        exhaust_diagnostic_dt_weight = None
 
         y_new = y + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
 
@@ -909,570 +948,587 @@ def integrate_with_projection(y0, tau0=0.0, tau_end=200.0):
 
     return np.array(T), np.array(Y).T, termination_reason  # like solve_ivp: Y has shape (nstate, nt)
 
-tau, Y, termination_reason = integrate_with_projection(y0, tau_span[0], tau_span[1])
-r, phi, pt, pr, pphi, m = Y
-E = -pt
-C = np.array([constraint_C(r[i], pt[i], pr[i], pphi[i], m[i]) for i in range(len(tau))])
+def main():
+    setup_prd_style()
+    print_configuration_summary()
+    tau, Y, termination_reason = integrate_with_projection(y0, tau_span[0], tau_span[1])
+    r, phi, pt, pr, pphi, m = Y
+    E = -pt
+    C = np.array([constraint_C(r[i], pt[i], pr[i], pphi[i], m[i]) for i in range(len(tau))])
 
-print(f"Horizon r+     = {r_plus:.6f}")
-print(f"Ergosphere (eq)= {local_ergosphere_radius(np.pi/2):.6f}")
-print(f"Minimum radius reached: r_min = {np.min(r):.4f}M (extraction zone: r < {R_EXTRACTION_LIMIT}M)")
-print(f"End state: r={r[-1]:.4f}, E={E[-1]:.6f}, m={m[-1]:.6f}")
-print(f"Constraint |C| max = {np.max(np.abs(C)):.3e}")
+    print(f"Horizon r+     = {r_plus:.6f}")
+    print(f"Ergosphere (eq)= {local_ergosphere_radius(np.pi/2):.6f}")
+    print(f"Minimum radius reached: r_min = {np.min(r):.4f}M (extraction zone: r < {R_EXTRACTION_LIMIT}M)")
+    print(f"End state: r={r[-1]:.4f}, E={E[-1]:.6f}, m={m[-1]:.6f}")
+    print(f"Constraint |C| max = {np.max(np.abs(C)):.3e}")
 
-# =============================================================================
-# ADDITIONAL PHYSICS VERIFICATION
-# =============================================================================
-# Verify causality (future-directedness) for sampled states
-from kerr_utils import verify_future_directed
-n_causality_violations = 0
-for i in range(len(tau)):
-    th_i = np.pi/2
-    cov_i, con_i = kerr_metric_cov_contra(r[i], th_i)
-    gu_tt_i, gu_tphi_i, gu_rr_i, _, gu_phiphi_i = con_i
-    u_t_i = (gu_tt_i * pt[i] + gu_tphi_i * pphi[i]) / m[i]
-    is_future, _ = verify_future_directed(u_t_i, warn=False)
-    if not is_future:
-        n_causality_violations += 1
+    # =============================================================================
+    # ADDITIONAL PHYSICS VERIFICATION
+    # =============================================================================
+    # Verify causality (future-directedness) for sampled states
+    from kerr_utils import verify_future_directed
+    n_causality_violations = 0
+    for i in range(len(tau)):
+        th_i = np.pi/2
+        cov_i, con_i = kerr_metric_cov_contra(r[i], th_i)
+        gu_tt_i, gu_tphi_i, gu_rr_i, _, gu_phiphi_i = con_i
+        u_t_i = (gu_tt_i * pt[i] + gu_tphi_i * pphi[i]) / m[i]
+        is_future, _ = verify_future_directed(u_t_i, warn=False)
+        if not is_future:
+            n_causality_violations += 1
 
-if n_causality_violations > 0:
-    print(f"WARNING: {n_causality_violations} causality violations (u^t <= 0) detected!")
-else:
-    print(f"Causality check: [OK] All sampled states have u^t > 0 (future-directed)")
-
-# Report termination status - this is critical for Penrose extraction claims
-print(f"\n{'TRAJECTORY OUTCOME':^65}")
-print("-"*65)
-if termination_reason == 'escape':
-    print(f"  *** SUCCESSFUL ESCAPE TO INFINITY ***")
-    print(f"  Final radius: r = {r[-1]:.2f}M > {ESCAPE_RADIUS}M (definitive escape)")
-    print(f"  Final energy delivered to infinity: E_final = {E[-1]:.6f}")
-    delta_E = E[-1] - E[0]
-    delta_m = m[0] - m[-1]
-    print(f"  Energy gain: DeltaE = {delta_E:.6f} ({100*delta_E/E[0]:.1f}% of initial)")
-    print(f"  Mass expended: Deltam = {delta_m:.6f} ({100*delta_m/m[0]:.1f}% of initial)")
-elif termination_reason == 'horizon':
-    print(f"  *** CAPTURED BY BLACK HOLE ***")
-    print(f"  Spacecraft crossed horizon safety margin at r = {r[-1]:.4f}M")
-    print(f"  Final energy at capture: E = {E[-1]:.6f}")
-    print(f"  NOTE: Energy gain cannot be claimed as 'extracted' since")
-    print(f"        the spacecraft did not escape to infinity!")
-elif termination_reason == 'mass':
-    print(f"  Integration ended: fuel exhausted (m = {m[-1]:.4f})")
-else:
-    print(f"  Integration ended: timeout (tau = {tau[-1]:.2f})")
-print("-"*65)
-
-# =============================================================================
-# EFFICIENCY ANALYSIS
-# =============================================================================
-
-# Compute efficiency metrics
-eta_inst, eta_cum, eta_max, penrose_active = print_efficiency_analysis(tau, E, m, r, a, M)
-
-# Compute derivatives for plotting
-dE_dtau = np.gradient(E, tau)
-dm_dtau = np.gradient(m, tau)
-
-# Throttle history (geometric throttle based on radius) - useful for plotting
-# the extraction-zone gate, but NOT sufficient to infer whether the engine actually fired.
-u_hist = np.array([throttle(ri, np.pi/2) for ri in r])
-
-# "Thrust active" should reflect the *actual dynamics* (engine firing), not merely throttle(r)>0,
-# because adaptive mode logic can disable thrust even when u_hist>0.
-# In this model, m decreases iff the engine is firing, so dm/dtau < 0 is the most robust indicator.
-mask = dm_dtau < -1e-10
-
-if np.any(mask):
-    total_time = tau[-1] - tau[0]
-    # Sum durations of all thrust-active intervals (do not use tau_on[-1]-tau_on[0], which includes gaps)
-    duty_time = float(np.sum(np.diff(tau) * mask[:-1]))
-    print(f"Thrust-on duration: {duty_time:.6f} out of {total_time:.6f}  (fraction {duty_time/total_time:.3%})")
-
-    # Net changes accumulated only during thrust-active intervals (based on stored sample points)
-    dE_thrust = float(np.sum((E[1:] - E[:-1]) * mask[:-1]))
-    dm_thrust = float(np.sum((m[:-1] - m[1:]) * mask[:-1]))
-    print(f"Delta E during thrust-active intervals: {dE_thrust:.8f}")
-    print(f"Delta m during thrust-active intervals: {dm_thrust:.8f}")
-else:
-    print("Engine never fired (dm/dtau ~ 0 everywhere).")
-
-# =============================================================================
-# THRUST MODEL CONSISTENCY CHECKS (tetrad + exhaust energy diagnostic)
-# =============================================================================
-exhaust_samples_for_capture = []  # Collect samples for capture verification
-
-if np.any(mask):
-    idxs = np.where(mask)[0]
-    ratios = []
-    v_eff_meas = []
-    Eex = []
-
-    r_erg_eq = local_ergosphere_radius(np.pi/2)
-
-    for i in idxs:
-        ri = float(r[i])
-        pti = float(pt[i])
-        pri = float(pr[i])
-        pphii = float(pphi[i])
-        mi = float(m[i])
-        if mi <= 0 or (not np.isfinite(mi)):
-            continue
-
-        th = np.pi/2
-        cov, con = kerr_metric_cov_contra(ri, th)
-        g_tt, g_tphi, g_rr, _, g_phiphi = cov
-        gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
-
-        dri = gu_rr * pri / mi
-        u_th_i = float(u_hist[i])
-        a_prop_i = a_max * u_th_i
-        thrust_i = mi * a_prop_i
-        if thrust_i <= 0:
-            continue
-
-        dm_pred = -thrust_i / (v_e if USE_EXACT_MOMENTUM_CONSERVATION else v_exhaust_momentum)
-
-        # Rocket 4-velocity u^mu (contravariant)
-        p_contra_t = gu_tt * pti + gu_tphi * pphii
-        p_contra_r = gu_rr * pri
-        p_contra_phi = gu_tphi * pti + gu_phiphi * pphii
-        u_vec = np.array([p_contra_t/mi, p_contra_r/mi, p_contra_phi/mi], dtype=float)
-
-        e_r, e_phi = build_rocket_rest_basis(u_vec, g_tt, g_tphi, g_rr, g_phiphi)
-        if (e_r is None) or (e_phi is None):
-            continue
-
-        # Use same steering logic as dynamics_continuous():
-        # In EXTRACTION mode: scan angles to MINIMIZE E_ex
-        # In other modes: use PID hover steering and pick sign for max energy gain
-        # For consistency check, we replicate what the integration actually did.
-        
-        if USE_ADAPTIVE_THRUST_MODE:
-            # EXTRACTION mode: scan angles to minimize E_ex (same as integration)
-            best_E_ex = float('inf')
-            best_s_vec = None
-            for alpha_scan in np.linspace(-np.pi/2, np.pi/2, 37):
-                s_r_scan = np.sin(alpha_scan)
-                s_phi_scan = np.cos(alpha_scan)
-                for sign_phi in [+1.0, -1.0]:
-                    s_vec_trial = s_r_scan * e_r + (sign_phi * s_phi_scan) * e_phi
-                    E_ex_trial, _ = compute_exhaust_energy(u_vec, s_vec_trial, v_e, g_tt, g_tphi, g_phiphi)
-                    if E_ex_trial < best_E_ex:
-                        best_E_ex = E_ex_trial
-                        best_s_vec = s_vec_trial
-            s_vec = best_s_vec if best_s_vec is not None else e_phi
-            f_vec = thrust_i * s_vec
-        else:
-            # Non-adaptive mode: PID hover steering + sign for max energy gain
-            alpha = 0.0
-            if use_radial_control:
-                alpha_cmd = kp_r * (r_set - ri) - kd_r * dri
-                alpha = float(np.clip(alpha_cmd, -alpha_max, alpha_max))
-
-            s_r = np.sin(alpha)
-            s_phi = np.cos(alpha)
-
-            def cand(sign_phi):
-                s_vec = s_r * e_r + (sign_phi * s_phi) * e_phi
-                f_vec = thrust_i * s_vec
-                dp_contra = f_vec + u_vec * dm_pred
-                dpt_c = g_tt * dp_contra[0] + g_tphi * dp_contra[2]
-                return dpt_c, s_vec, f_vec
-
-            dpt_p, s_p, f_p = cand(+1.0)
-            dpt_m, s_m, f_m = cand(-1.0)
-            if (-dpt_p) >= (-dpt_m):
-                s_vec = s_p
-                f_vec = f_p
-            else:
-                s_vec = s_m
-                f_vec = f_m
-
-        # Check |f| == thrust
-        f2 = _inner_prod_tr(f_vec, f_vec, g_tt, g_tphi, g_rr, g_phiphi)
-        if np.isfinite(f2) and f2 > 0:
-            fmag = np.sqrt(f2)
-            ratios.append(fmag / thrust_i)
-
-            # Effective "exhaust momentum" inferred from the numerically realized dm/dtau
-            if dm_dtau[i] < -1e-12:
-                v_eff_meas.append(fmag / (-dm_dtau[i]))
-
-            # Exhaust 4-velocity in the rocket rest frame: u_ex = gamma_e (u - v_e s)
-            # (Valid when v_e is interpreted as a speed in the rocket rest frame.)
-            u_ex = gamma_e * (u_vec - v_e * s_vec)
-            u_ex_tcov = g_tt * u_ex[0] + g_tphi * u_ex[2]
-            E_ex_val = -u_ex_tcov
-            Eex.append(E_ex_val)
-            
-            # Collect sample for capture verification (downsample for performance)
-            if i % 10 == 0:  # Every 10th thrust sample
-                exhaust_samples_for_capture.append({
-                    'E_ex': E_ex_val,
-                    'r': ri,
-                    'th': th,
-                    'u_ex_contra': u_ex  # Contravariant 4-velocity (t, r, phi components)
-                })
-
-    ratios = np.array(ratios, dtype=float) if len(ratios) else np.array([])
-    v_eff_meas = np.array(v_eff_meas, dtype=float) if len(v_eff_meas) else np.array([])
-    Eex = np.array(Eex, dtype=float) if len(Eex) else np.array([])
-
-    print("\n" + "="*65)
-    print("THRUST MODEL CONSISTENCY CHECKS")
-    print("="*65)
-    if len(ratios):
-        print(f"  Force normalization: max(| |f|/T - 1 |) = {np.max(np.abs(ratios-1.0)):.3e}")
-        print(f"                     mean(|f|/T) = {np.mean(ratios):.6f}")
+    if n_causality_violations > 0:
+        print(f"WARNING: {n_causality_violations} causality violations (u^t <= 0) detected!")
     else:
-        print("  Force normalization: (no valid thrust samples)")
+        print(f"Causality check: [OK] All sampled states have u^t > 0 (future-directed)")
 
-    if len(v_eff_meas):
-        print(f"  Inferred v_eff = |f|/(-dm/dtau): mean={np.mean(v_eff_meas):.4f}, std={np.std(v_eff_meas):.4f}")
-        # In the EXACT emission model implemented here:
-        #   T = v_e * (-dm/dtau)  ==> v_eff should match v_e.
-        # In the legacy approximate model:
-        #   T = v_exhaust_momentum * (-dm/dtau).
-        expected_v_eff = v_e if USE_EXACT_MOMENTUM_CONSERVATION else v_exhaust_momentum
-        print(f"  Expected v_eff (|f|/(-dm/dtau)): {expected_v_eff:.4f}  (v_e={v_e:.3f}, gamma_e={gamma_e:.3f})")
-
-    if len(Eex):
-        frac_neg = np.mean(Eex < 0.0)
-        print(f"  Exhaust energy per unit exhaust mass at infinity: min={np.min(Eex):.6f}, median={np.median(Eex):.6f}")
-        print(f"  Fraction with E_ex < 0 (negative-energy exhaust): {100*frac_neg:.1f}%")
-        if frac_neg > 0:
-            print("    -> This is the direct Penrose signature (waste stream carries negative Killing energy).")
-        else:
-            print("    -> No negative-energy exhaust detected for this run.")
-    print("="*65)
-
-# =============================================================================
-# GENUINE PENROSE EXTRACTION ANALYSIS (E_ex tracking)
-# =============================================================================
-print("\n" + "="*65)
-print("         GENUINE PENROSE EXTRACTION ANALYSIS")
-print("="*65)
-
-# Global E_ex_history was populated during integration
-E_ex_arr = np.array(E_ex_history) if E_ex_history else np.array([])
-
-if len(E_ex_arr) > 0:
-    n_negative = np.sum(E_ex_arr < 0)
-    n_total = len(E_ex_arr)
-    frac_negative = n_negative / n_total
-    
-    print(f"\n{'EXHAUST ENERGY STATISTICS':^65}")
+    # Report termination status - this is critical for Penrose extraction claims
+    print(f"\n{'TRAJECTORY OUTCOME':^65}")
     print("-"*65)
-    print(f"  Total thrust samples:            {n_total}")
-    print(f"  Samples with E_ex < 0:           {n_negative} ({100*frac_negative:.1f}%)")
-    print(f"  Min E_ex:                        {np.min(E_ex_arr):.6f}")
-    print(f"  Max E_ex:                        {np.max(E_ex_arr):.6f}")
-    print(f"  Mean E_ex:                       {np.mean(E_ex_arr):.6f}")
-    
-    if frac_negative > 0:
-        neg_mask = E_ex_arr < 0
-        mean_neg = np.mean(E_ex_arr[neg_mask])
-        print(f"  Mean E_ex (when negative):       {mean_neg:.6f}")
-        
-        # Compute energy flux using tracked delta_mu_history (exhaust rest mass rates)
-        # Each sample contributes: E_ex_i * deltamu_i where deltamu_i = (dmu/dtau)_i * dt
-        # This is the CORRECT calculation matching compute_energy_budget:
-        #   Energy to BH = Sum E_ex,i * deltamu_i  (not rocket mass loss!)
-        if len(delta_mu_history) == len(E_ex_arr):
-            delta_mu_integrated = np.array([rate * DT_INTEGRATION for rate in delta_mu_history])
-            negative_energy_flux = np.sum(E_ex_arr[neg_mask] * delta_mu_integrated[neg_mask])
-        else:
-            # History mismatch - cannot compute properly
-            print(f"  (Warning: delta_mu_history length mismatch - cannot compute exact flux)")
-            print(f"  (E_ex_arr: {len(E_ex_arr)}, delta_mu_history: {len(delta_mu_history)})")
-            negative_energy_flux = float('nan')
-        
-        print(f"\n{'PENROSE EXTRACTION VERDICT':^65}")
-        print("-"*65)
-        print(f"  *** GENUINE PENROSE EXTRACTION DETECTED ***")
-        print(f"  Negative-energy exhaust fell into the black hole,")
-        print(f"  extracting rotational energy from the black hole.")
-        if np.isfinite(negative_energy_flux):
-            print(f"  Energy extracted via negative-E_ex exhaust: {-negative_energy_flux:.6f}")
-            print(f"  (Computed as Sum E_ex,i * deltamu_i for E_ex < 0)")
-        else:
-            print(f"  (Energy flux could not be computed - see warning above)")
+    if termination_reason == 'escape':
+        print(f"  *** SUCCESSFUL ESCAPE TO INFINITY ***")
+        print(f"  Final radius: r = {r[-1]:.2f}M > {ESCAPE_RADIUS}M (definitive escape)")
+        print(f"  Final energy delivered to infinity: E_final = {E[-1]:.6f}")
+        delta_E = E[-1] - E[0]
+        delta_m = m[0] - m[-1]
+        print(f"  Energy gain: DeltaE = {delta_E:.6f} ({100*delta_E/E[0]:.1f}% of initial)")
+        print(f"  Mass expended: Deltam = {delta_m:.6f} ({100*delta_m/m[0]:.1f}% of initial)")
+    elif termination_reason == 'horizon':
+        print(f"  *** CAPTURED BY BLACK HOLE ***")
+        print(f"  Spacecraft crossed horizon safety margin at r = {r[-1]:.4f}M")
+        print(f"  Final energy at capture: E = {E[-1]:.6f}")
+        print(f"  NOTE: Energy gain cannot be claimed as 'extracted' since")
+        print(f"        the spacecraft did not escape to infinity!")
+    elif termination_reason == 'mass':
+        print(f"  Integration ended: fuel exhausted (m = {m[-1]:.4f})")
     else:
-        print(f"\n{'PENROSE EXTRACTION VERDICT':^65}")
-        print("-"*65)
-        print(f"  No genuine Penrose extraction in this run.")
-        print(f"  All exhaust had positive Killing energy (E_ex > 0).")
-        print(f"  Energy gain came from relativistic rocket physics,")
-        print(f"  not from black hole rotational energy extraction.")
+        print(f"  Integration ended: timeout (tau = {tau[-1]:.2f})")
+    print("-"*65)
+
+    # =============================================================================
+    # EFFICIENCY ANALYSIS
+    # =============================================================================
+
+    # Compute efficiency metrics
+    eta_inst, eta_cum, eta_max, penrose_active = print_efficiency_analysis(tau, E, m, r, a, M)
+
+    # Compute derivatives for plotting
+    dE_dtau = np.gradient(E, tau)
+    dm_dtau = np.gradient(m, tau)
+
+    # Throttle history (geometric throttle based on radius) - useful for plotting
+    # the extraction-zone gate, but NOT sufficient to infer whether the engine actually fired.
+    u_hist = np.array([throttle(ri, np.pi/2) for ri in r])
+
+    # "Thrust active" should reflect the *actual dynamics* (engine firing), not merely throttle(r)>0,
+    # because adaptive mode logic can disable thrust even when u_hist>0.
+    # In this model, m decreases iff the engine is firing, so dm/dtau < 0 is the most robust indicator.
+    mask = dm_dtau < -1e-10
+
+    if np.any(mask):
+        total_time = tau[-1] - tau[0]
+        # Sum durations of all thrust-active intervals (do not use tau_on[-1]-tau_on[0], which includes gaps)
+        duty_time = float(np.sum(np.diff(tau) * mask[:-1]))
+        print(f"Thrust-on duration: {duty_time:.6f} out of {total_time:.6f}  (fraction {duty_time/total_time:.3%})")
+
+        # Net changes accumulated only during thrust-active intervals (based on stored sample points)
+        dE_thrust = float(np.sum((E[1:] - E[:-1]) * mask[:-1]))
+        dm_thrust = float(np.sum((m[:-1] - m[1:]) * mask[:-1]))
+        print(f"Delta E during thrust-active intervals: {dE_thrust:.8f}")
+        print(f"Delta m during thrust-active intervals: {dm_thrust:.8f}")
+    else:
+        print("Engine never fired (dm/dtau ~ 0 everywhere).")
+
+    # =============================================================================
+    # THRUST MODEL CONSISTENCY CHECKS (tetrad + exhaust energy diagnostic)
+    # =============================================================================
+    # Prefer the actual exhaust states emitted by dynamics_continuous(). The
+    # consistency loop below recomputes an approximate direction and is only a
+    # fallback for legacy/non-exact modes.
+    use_recorded_capture_samples = USE_EXACT_MOMENTUM_CONSERVATION and len(exhaust_sample_history) > 0
+    if use_recorded_capture_samples:
+        exhaust_samples_for_capture = [
+            sample for j, sample in enumerate(exhaust_sample_history) if j % 10 == 0
+        ]
+    else:
+        exhaust_samples_for_capture = []  # Collect fallback samples for capture verification
+
+    if np.any(mask):
+        idxs = np.where(mask)[0]
+        ratios = []
+        v_eff_meas = []
+        Eex = []
+
+        r_erg_eq = local_ergosphere_radius(np.pi/2)
+
+        for i in idxs:
+            ri = float(r[i])
+            pti = float(pt[i])
+            pri = float(pr[i])
+            pphii = float(pphi[i])
+            mi = float(m[i])
+            if mi <= 0 or (not np.isfinite(mi)):
+                continue
+
+            th = np.pi/2
+            cov, con = kerr_metric_cov_contra(ri, th)
+            g_tt, g_tphi, g_rr, _, g_phiphi = cov
+            gu_tt, gu_tphi, gu_rr, _, gu_phiphi = con
+
+            dri = gu_rr * pri / mi
+            u_th_i = float(u_hist[i])
+            a_prop_i = a_max * u_th_i
+            thrust_i = mi * a_prop_i
+            if thrust_i <= 0:
+                continue
+
+            dm_pred = -thrust_i / (v_e if USE_EXACT_MOMENTUM_CONSERVATION else v_exhaust_momentum)
+
+            # Rocket 4-velocity u^mu (contravariant)
+            p_contra_t = gu_tt * pti + gu_tphi * pphii
+            p_contra_r = gu_rr * pri
+            p_contra_phi = gu_tphi * pti + gu_phiphi * pphii
+            u_vec = np.array([p_contra_t/mi, p_contra_r/mi, p_contra_phi/mi], dtype=float)
+
+            e_r, e_phi = build_rocket_rest_basis(u_vec, g_tt, g_tphi, g_rr, g_phiphi)
+            if (e_r is None) or (e_phi is None):
+                continue
+
+            # Use same steering logic as dynamics_continuous():
+            # In EXTRACTION mode: scan angles to MINIMIZE E_ex
+            # In other modes: use PID hover steering and pick sign for max energy gain
+            # For consistency check, we replicate what the integration actually did.
         
-        # Compute threshold for E_ex < 0
-        # s_t_crit = -E_rocket / v_e
-        # Need s_t < s_t_crit for E_ex < 0
-        E_rocket_mean = np.mean(E) / np.mean(m)  # Approximate specific energy
-        s_t_crit = -E_rocket_mean / v_e
-        print(f"\n  For E_ex < 0, need s_t < {s_t_crit:.4f}")
-        print(f"  Current v_e = {v_e:.3f}, E_rocket/m ~ {E_rocket_mean:.3f}")
-        print(f"  Try: higher v_e, deeper ergosphere (lower r_set),")
-        print(f"       or near-extremal spin (USE_NEAR_EXTREMAL_PARAMS=True)")
-else:
-    print("  No exhaust energy data recorded (no thrust applied).")
+            if USE_ADAPTIVE_THRUST_MODE:
+                # EXTRACTION mode: scan angles to minimize E_ex (same as integration)
+                best_E_ex = float('inf')
+                best_s_vec = None
+                for alpha_scan in np.linspace(-np.pi/2, np.pi/2, 37):
+                    s_r_scan = np.sin(alpha_scan)
+                    s_phi_scan = np.cos(alpha_scan)
+                    for sign_phi in [+1.0, -1.0]:
+                        s_vec_trial = s_r_scan * e_r + (sign_phi * s_phi_scan) * e_phi
+                        E_ex_trial, _ = compute_exhaust_energy(u_vec, s_vec_trial, v_e, g_tt, g_tphi, g_phiphi)
+                        if E_ex_trial < best_E_ex:
+                            best_E_ex = E_ex_trial
+                            best_s_vec = s_vec_trial
+                s_vec = best_s_vec if best_s_vec is not None else e_phi
+                f_vec = thrust_i * s_vec
+            else:
+                # Non-adaptive mode: PID hover steering + sign for max energy gain
+                alpha = 0.0
+                if use_radial_control:
+                    alpha_cmd = kp_r * (r_set - ri) - kd_r * dri
+                    alpha = float(np.clip(alpha_cmd, -alpha_max, alpha_max))
 
-print("="*65)
+                s_r = np.sin(alpha)
+                s_phi = np.cos(alpha)
 
-# =============================================================================
-# EXHAUST CAPTURE VERIFICATION (confirm negative-energy exhaust falls into BH)
-# =============================================================================
-# This is critical: negative Killing energy is necessary but not sufficient.
-# We must verify the exhaust actually falls into the horizon.
+                def cand(sign_phi):
+                    s_vec = s_r * e_r + (sign_phi * s_phi) * e_phi
+                    f_vec = thrust_i * s_vec
+                    dp_contra = f_vec + u_vec * dm_pred
+                    dpt_c = g_tt * dp_contra[0] + g_tphi * dp_contra[2]
+                    return dpt_c, s_vec, f_vec
 
-if len(exhaust_samples_for_capture) > 0:
-    n_neg_samples = sum(1 for s in exhaust_samples_for_capture if s['E_ex'] < 0)
-    if n_neg_samples > 0:
+                dpt_p, s_p, f_p = cand(+1.0)
+                dpt_m, s_m, f_m = cand(-1.0)
+                if (-dpt_p) >= (-dpt_m):
+                    s_vec = s_p
+                    f_vec = f_p
+                else:
+                    s_vec = s_m
+                    f_vec = f_m
+
+            # Check |f| == thrust
+            f2 = _inner_prod_tr(f_vec, f_vec, g_tt, g_tphi, g_rr, g_phiphi)
+            if np.isfinite(f2) and f2 > 0:
+                fmag = np.sqrt(f2)
+                ratios.append(fmag / thrust_i)
+
+                # Effective "exhaust momentum" inferred from the numerically realized dm/dtau
+                if dm_dtau[i] < -1e-12:
+                    v_eff_meas.append(fmag / (-dm_dtau[i]))
+
+                # Exhaust 4-velocity in the rocket rest frame: u_ex = gamma_e (u - v_e s)
+                # (Valid when v_e is interpreted as a speed in the rocket rest frame.)
+                u_ex = gamma_e * (u_vec - v_e * s_vec)
+                u_ex_tcov = g_tt * u_ex[0] + g_tphi * u_ex[2]
+                E_ex_val = -u_ex_tcov
+                Eex.append(E_ex_val)
+            
+                # Collect fallback sample for capture verification (downsample for performance)
+                if (not use_recorded_capture_samples) and i % 10 == 0:
+                    exhaust_samples_for_capture.append({
+                        'E_ex': E_ex_val,
+                        'r': ri,
+                        'th': th,
+                        'u_ex_contra': u_ex  # Contravariant 4-velocity (t, r, phi components)
+                    })
+
+        ratios = np.array(ratios, dtype=float) if len(ratios) else np.array([])
+        v_eff_meas = np.array(v_eff_meas, dtype=float) if len(v_eff_meas) else np.array([])
+        Eex = np.array(Eex, dtype=float) if len(Eex) else np.array([])
+
         print("\n" + "="*65)
-        print("         EXHAUST CAPTURE VERIFICATION")
+        print("THRUST MODEL CONSISTENCY CHECKS")
         print("="*65)
-        print(f"  Verifying {n_neg_samples} negative-energy exhaust samples...")
-        print(f"  (downsampled from full thrust history for performance)")
-        
-        # Run capture verification
-        verify_exhaust_capture_batch(exhaust_samples_for_capture, a, M, verbose=True)
-    else:
-        print("\n  (Skipping capture verification: no negative-energy exhaust samples)")
-else:
-    print("\n  (Skipping capture verification: no exhaust samples collected)")
+        if len(ratios):
+            print(f"  Force normalization: max(| |f|/T - 1 |) = {np.max(np.abs(ratios-1.0)):.3e}")
+            print(f"                     mean(|f|/T) = {np.mean(ratios):.6f}")
+        else:
+            print("  Force normalization: (no valid thrust samples)")
 
-# =============================================================================
-# ENERGY BUDGET VALIDATION
-# =============================================================================
-# Compute the proper energy budget using tracked delta_mu values
-# delta_mu_history contains RATES (dmu/dtau), need to multiply by dt to get deltamu per step
-# Uses global DT_INTEGRATION constant (single source of truth)
+        if len(v_eff_meas):
+            print(f"  Inferred v_eff = |f|/(-dm/dtau): mean={np.mean(v_eff_meas):.4f}, std={np.std(v_eff_meas):.4f}")
+            # In the EXACT emission model implemented here:
+            #   T = v_e * (-dm/dtau)  ==> v_eff should match v_e.
+            # In the legacy approximate model:
+            #   T = v_exhaust_momentum * (-dm/dtau).
+            expected_v_eff = v_e if USE_EXACT_MOMENTUM_CONSERVATION else v_exhaust_momentum
+            print(f"  Expected v_eff (|f|/(-dm/dtau)): {expected_v_eff:.4f}  (v_e={v_e:.3f}, gamma_e={gamma_e:.3f})")
 
-if len(E_ex_history) > 0 and len(delta_mu_history) > 0:
-    # Convert rates to integrated amounts: deltamu_i = (dmu/dtau)_i * dt
-    delta_mu_integrated = [rate * DT_INTEGRATION for rate in delta_mu_history]
-    
-    budget = compute_energy_budget(
-        E_initial=E[0], E_final=E[-1],
-        m_initial=m0, m_final=m[-1],
-        E_ex_history=E_ex_history,
-        delta_mu_history=delta_mu_integrated
-    )
-    print_energy_budget(budget, a)
+        if len(Eex):
+            frac_neg = np.mean(Eex < 0.0)
+            print(f"  Exhaust energy per unit exhaust mass at infinity: min={np.min(Eex):.6f}, median={np.median(Eex):.6f}")
+            print(f"  Fraction with E_ex < 0 (negative-energy exhaust): {100*frac_neg:.1f}%")
+            if frac_neg > 0:
+                print("    -> This is the direct Penrose signature (waste stream carries negative Killing energy).")
+            else:
+                print("    -> No negative-energy exhaust detected for this run.")
+        print("="*65)
 
-# Report on adaptive thrust mode if enabled
-if USE_ADAPTIVE_THRUST_MODE and len(mode_history) > 0:
+    # =============================================================================
+    # GENUINE PENROSE EXTRACTION ANALYSIS (E_ex tracking)
+    # =============================================================================
     print("\n" + "="*65)
-    print("         ADAPTIVE THRUST MODE HISTORY")
-    print("="*65)
-    # mode_history tracking would need to be added during integration
-    # For now, report final mode
-    print(f"  Final thrust mode: {current_thrust_mode.name}")
+    print("         NEGATIVE-ENERGY EXHAUST ANALYSIS")
     print("="*65)
 
-# =============================================================================
-# PRD-STYLE PLOTS
-# =============================================================================
+    # Global E_ex_history was populated during integration
+    E_ex_arr = np.array(E_ex_history) if E_ex_history else np.array([])
 
-# =============================================================================
-# PRD-STYLE FIGURES - Split into cleaner, separate figures
-# =============================================================================
-
-# Prepare common data
-x = r * np.cos(phi)
-y_coord = r * np.sin(phi)
-thrust_on = mask
-r_erg_val = local_ergosphere_radius(np.pi/2)
-
-# Compute running cumulative efficiency
-eta_cum_running = np.zeros_like(E)
-for i in range(1, len(E)):
-    dm = m[0] - m[i]
-    if dm > 1e-10:
-        eta_cum_running[i] = (E[i] - E[0]) / dm
+    if len(E_ex_arr) > 0:
+        n_negative = np.sum(E_ex_arr < 0)
+        n_total = len(E_ex_arr)
+        frac_negative = n_negative / n_total
+    
+        print(f"\n{'EXHAUST ENERGY STATISTICS':^65}")
+        print("-"*65)
+        print(f"  Total thrust samples:            {n_total}")
+        print(f"  Samples with E_ex < 0:           {n_negative} ({100*frac_negative:.1f}%)")
+        print(f"  Min E_ex:                        {np.min(E_ex_arr):.6f}")
+        print(f"  Max E_ex:                        {np.max(E_ex_arr):.6f}")
+        print(f"  Mean E_ex:                       {np.mean(E_ex_arr):.6f}")
+    
+        if frac_negative > 0:
+            neg_mask = E_ex_arr < 0
+            mean_neg = np.mean(E_ex_arr[neg_mask])
+            print(f"  Mean E_ex (when negative):       {mean_neg:.6f}")
+        
+            # Compute energy flux using tracked RK4-weighted exhaust rest-mass
+            # increments. Each sample contributes E_ex_i * deltamu_i, matching
+            # compute_energy_budget and avoiding double-counting RK4 substages.
+            if len(delta_mu_history) == len(E_ex_arr):
+                delta_mu_integrated = np.array(delta_mu_history)
+                negative_energy_flux = np.sum(E_ex_arr[neg_mask] * delta_mu_integrated[neg_mask])
+            else:
+                # History mismatch - cannot compute properly
+                print(f"  (Warning: delta_mu_history length mismatch - cannot compute exact flux)")
+                print(f"  (E_ex_arr: {len(E_ex_arr)}, delta_mu_history: {len(delta_mu_history)})")
+                negative_energy_flux = float('nan')
+        
+            print(f"\n{'PENROSE EXTRACTION VERDICT':^65}")
+            print("-"*65)
+            print(f"  *** NEGATIVE-ENERGY EXHAUST DETECTED ***")
+            print(f"  This is the local Penrose signature. Capture of the")
+            print(f"  negative-energy exhaust is checked explicitly below.")
+            if np.isfinite(negative_energy_flux):
+                print(f"  Negative-E_ex energy flux: {-negative_energy_flux:.6f}")
+                print(f"  (Computed as Sum E_ex,i * deltamu_i for E_ex < 0)")
+            else:
+                print(f"  (Energy flux could not be computed - see warning above)")
+        else:
+            print(f"\n{'PENROSE EXTRACTION VERDICT':^65}")
+            print("-"*65)
+            print(f"  No genuine Penrose extraction in this run.")
+            print(f"  All exhaust had positive Killing energy (E_ex > 0).")
+            print(f"  Energy gain came from relativistic rocket physics,")
+            print(f"  not from black hole rotational energy extraction.")
+        
+            # Compute threshold for E_ex < 0
+            # s_t_crit = -E_rocket / v_e
+            # Need s_t < s_t_crit for E_ex < 0
+            E_rocket_mean = np.mean(E) / np.mean(m)  # Approximate specific energy
+            s_t_crit = -E_rocket_mean / v_e
+            print(f"\n  For E_ex < 0, need s_t < {s_t_crit:.4f}")
+            print(f"  Current v_e = {v_e:.3f}, E_rocket/m ~ {E_rocket_mean:.3f}")
+            print(f"  Try: higher v_e, deeper ergosphere (lower r_set),")
+            print(f"       or near-extremal spin (USE_NEAR_EXTREMAL_PARAMS=True)")
     else:
-        eta_cum_running[i] = 0.0
+        print("  No exhaust energy data recorded (no thrust applied).")
 
-# Clip extreme values for visualization
-eta_plot = np.clip(eta_inst, -0.5, 5.0)
+    print("="*65)
 
-# -----------------------------------------------------------------------------
-# FIGURE 1: Trajectory and Dynamics (1x2) - ZOOMED to ergosphere region
-# -----------------------------------------------------------------------------
-fig1, (ax_traj, ax_rad) = plt.subplots(1, 2, figsize=(10, 4.5))
-fig1.suptitle('Continuous-Thrust Penrose Process: Trajectory', fontsize=12, fontweight='bold')
+    # =============================================================================
+    # EXHAUST CAPTURE VERIFICATION (confirm negative-energy exhaust falls into BH)
+    # =============================================================================
+    # This is critical: negative Killing energy is necessary but not sufficient.
+    # We must verify the exhaust actually falls into the horizon.
 
-# (a) Trajectory - zoomed to show ergosphere burn
-for i in range(len(x)-1):
-    if thrust_on[i]:
-        ax_traj.plot(x[i:i+2], y_coord[i:i+2], color=COLORS['orange'], lw=1.2, zorder=3)
+    if len(exhaust_samples_for_capture) > 0:
+        n_neg_samples = sum(1 for s in exhaust_samples_for_capture if s['E_ex'] < 0)
+        if n_neg_samples > 0:
+            print("\n" + "="*65)
+            print("         EXHAUST CAPTURE VERIFICATION")
+            print("="*65)
+            print(f"  Verifying {n_neg_samples} negative-energy exhaust samples...")
+            print(f"  (downsampled from full thrust history for performance)")
+        
+            # Run capture verification
+            capture_result = verify_exhaust_capture_batch(exhaust_samples_for_capture, a, M, verbose=True)
+            if not capture_result['penrose_valid']:
+                print("\n  Capture verification did not confirm every negative-energy sample.")
+                print("  Treat this run as evidence of negative-E_ex emission, not as")
+                print("  a fully verified extraction-with-escape trajectory.")
+        else:
+            print("\n  (Skipping capture verification: no negative-energy exhaust samples)")
     else:
-        ax_traj.plot(x[i:i+2], y_coord[i:i+2], color=COLORS['blue'], lw=1.0, zorder=2)
+        print("\n  (Skipping capture verification: no exhaust samples collected)")
 
-ax_traj.plot([], [], color=COLORS['orange'], lw=2, label='Thrust ON')
-ax_traj.plot([], [], color=COLORS['blue'], lw=1.5, label='Coast')
-ax_traj.add_patch(plt.Circle((0, 0), r_plus, fill=True, color=COLORS['black'], zorder=10))
-ax_traj.add_patch(plt.Circle((0, 0), r_erg_val, fill=False, 
-                              color=COLORS['vermilion'], ls='--', lw=1.5, zorder=1))
-ax_traj.plot([], [], 'o', color=COLORS['black'], ms=8, label='Horizon')
-ax_traj.plot([], [], '--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
-theta_ring = np.linspace(0, 2*np.pi, 100)
-ax_traj.plot(r_set * np.cos(theta_ring), r_set * np.sin(theta_ring), 
-             color=COLORS['green'], ls=':', lw=1.0, alpha=0.8, label=f'$r_{{set}}$={r_set}')
-ax_traj.set_aspect('equal', 'box')
-ax_traj.set_xlabel(r'$x/M$', fontsize=10)
-ax_traj.set_ylabel(r'$y/M$', fontsize=10)
-ax_traj.set_title('(a) Equatorial trajectory (zoomed)', fontsize=11)
-ax_traj.legend(loc='upper left', fontsize=9)
-# Zoom to ergosphere region: show from -5M to +5M to capture entry, burn, and exit
-zoom_extent = 5.0
-ax_traj.set_xlim(-zoom_extent, zoom_extent)
-ax_traj.set_ylim(-zoom_extent, zoom_extent)
+    # =============================================================================
+    # ENERGY BUDGET VALIDATION
+    # =============================================================================
+    # Compute the proper energy budget using tracked RK4-weighted deltamu values.
+    # delta_mu_history already contains integrated exhaust rest-mass increments.
 
-# (b) Radius
-ax_rad.plot(tau, r, color=COLORS['blue'], lw=1.5, label=r'$r(\tau)$')
-ax_rad.fill_between(tau, 0, r.max()*1.1, where=thrust_on, 
-                    color=COLORS['orange'], alpha=0.15, zorder=0, label='Thrust ON')
-ax_rad.axhline(r_erg_val, ls='--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
-ax_rad.axhline(r_set, ls='-.', color=COLORS['green'], lw=1.2, label=f'$r_{{set}}$={r_set}')
-ax_rad.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
-ax_rad.set_ylabel(r'Radius $r/M$', fontsize=10)
-ax_rad.set_ylim(0, r.max()*1.05)
-ax_rad.set_title('(b) Radial evolution', fontsize=11)
-ax_rad.legend(loc='upper right', fontsize=9)
+    if len(E_ex_history) > 0 and len(delta_mu_history) > 0:
+        budget = compute_energy_budget(
+            E_initial=E[0], E_final=E[-1],
+            m_initial=m0, m_final=m[-1],
+            E_ex_history=E_ex_history,
+            delta_mu_history=delta_mu_history
+        )
+        print_energy_budget(budget, a)
 
-plt.tight_layout()
-plt.savefig('continuous_trajectory.pdf', dpi=300, bbox_inches='tight')
-plt.savefig('continuous_trajectory.png', dpi=150, bbox_inches='tight')
+    # Report on adaptive thrust mode if enabled
+    if USE_ADAPTIVE_THRUST_MODE and len(mode_history) > 0:
+        print("\n" + "="*65)
+        print("         ADAPTIVE THRUST MODE HISTORY")
+        print("="*65)
+        # mode_history tracking would need to be added during integration
+        # For now, report final mode
+        print(f"  Final thrust mode: {current_thrust_mode.name}")
+        print("="*65)
 
-# -----------------------------------------------------------------------------
-# FIGURE 2: Energy and Efficiency (1x2)
-# -----------------------------------------------------------------------------
-fig2, (ax_em, ax_eff) = plt.subplots(1, 2, figsize=(10, 4))
-fig2.suptitle('Continuous-Thrust Penrose Process: Energy', fontsize=12, fontweight='bold')
+    # =============================================================================
+    # PRD-STYLE PLOTS
+    # =============================================================================
 
-# (c) Energy and mass - use separate y-axes but better spacing
-ax_em.plot(tau, E, color=COLORS['blue'], lw=2, label=r'Energy $E$')
-ax_em.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
-ax_em.set_ylabel(r'Energy $E$', fontsize=10)
-ax_em.set_title(f'(c) Energy: DeltaE = {E[-1] - E[0]:+.3f} ({100*(E[-1]-E[0])/E[0]:+.1f}%)', fontsize=11)
+    # =============================================================================
+    # PRD-STYLE FIGURES - Split into cleaner, separate figures
+    # =============================================================================
 
-ax_em_twin = ax_em.twinx()
-ax_em_twin.plot(tau, m, color=COLORS['orange'], ls='--', lw=2, label=r'Mass $m$')
-ax_em_twin.set_ylabel(r'Rest mass $m$', fontsize=10, color=COLORS['orange'])
-ax_em_twin.tick_params(axis='y', labelcolor=COLORS['orange'])
+    # Prepare common data
+    x = r * np.cos(phi)
+    y_coord = r * np.sin(phi)
+    thrust_on = mask
+    r_erg_val = local_ergosphere_radius(np.pi/2)
 
-# Legends on left side to avoid overlap
-ax_em.legend(loc='upper left', fontsize=9)
-ax_em_twin.legend(loc='lower left', fontsize=9)
+    # Compute running cumulative efficiency
+    eta_cum_running = np.zeros_like(E)
+    for i in range(1, len(E)):
+        dm = m[0] - m[i]
+        if dm > 1e-10:
+            eta_cum_running[i] = (E[i] - E[0]) / dm
+        else:
+            eta_cum_running[i] = 0.0
 
-# (d) Cumulative efficiency
-ax_eff.plot(tau, eta_cum_running, color=COLORS['green'], lw=2, label=r'$\eta_{\mathrm{cum}}$')
-ax_eff.axhline(eta_max, ls='--', color=COLORS['vermilion'], lw=1.5, 
-               label=f'$\\eta_{{max}}$ = {eta_max:.2f}')
-ax_eff.axhline(1.0, ls=':', color=COLORS['gray'], lw=1.2, label='Break-even')
-ax_eff.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
-ax_eff.set_ylabel(r'Cumulative efficiency $\eta$', fontsize=10)
-ax_eff.set_title('(d) Extraction efficiency', fontsize=11)
-ax_eff.legend(loc='lower right', fontsize=9)
+    # Clip extreme values for visualization
+    eta_plot = np.clip(eta_inst, -0.5, 5.0)
 
-plt.tight_layout()
-plt.savefig('continuous_energy.pdf', dpi=300, bbox_inches='tight')
-plt.savefig('continuous_energy.png', dpi=150, bbox_inches='tight')
+    # -----------------------------------------------------------------------------
+    # FIGURE 1: Trajectory and Dynamics (1x2) - ZOOMED to ergosphere region
+    # -----------------------------------------------------------------------------
+    fig1, (ax_traj, ax_rad) = plt.subplots(1, 2, figsize=(10, 4.5))
+    fig1.suptitle('Continuous-Thrust Penrose Process: Trajectory', fontsize=12, fontweight='bold')
 
-# -----------------------------------------------------------------------------
-# FIGURE 3: Penrose Extraction Analysis (1x2)
-# -----------------------------------------------------------------------------
-if len(E_ex_history) > 0 and len(r_ex_history) > 0:
-    E_ex_arr = np.array(E_ex_history)
-    r_ex_arr = np.array(r_ex_history)
-    neg_mask = E_ex_arr < 0
-    pos_mask = E_ex_arr >= 0
-    
-    fig3, (ax_Ex_r, ax_Ex_hist) = plt.subplots(1, 2, figsize=(10, 4))
-    fig3.suptitle('Penrose Extraction: Exhaust Energy Analysis', fontsize=12, fontweight='bold')
-    
-    # (g) E_ex vs radius
-    # Use the computed R_EXTRACTION_LIMIT for plotting consistency
-    r_extraction_limit = R_EXTRACTION_LIMIT  # Use computed value, not hardcoded
-    
-    if neg_mask.any():
-        ax_Ex_r.scatter(r_ex_arr[neg_mask], E_ex_arr[neg_mask], 
-                        c=COLORS['green'], s=12, alpha=0.7, label=r'$E_{ex} < 0$ (Penrose)', zorder=3)
-    if pos_mask.any():
-        ax_Ex_r.scatter(r_ex_arr[pos_mask], E_ex_arr[pos_mask], 
-                        c=COLORS['gray'], s=10, alpha=0.4, label=r'$E_{ex} \geq 0$', zorder=2)
-    
-    ax_Ex_r.axhline(0, ls='-', color=COLORS['black'], lw=2, alpha=0.9, zorder=4, label=r'$E_{ex}=0$')
-    ax_Ex_r.axvspan(r_plus, r_extraction_limit, color=COLORS['green'], alpha=0.1, label='Extraction zone')
-    ax_Ex_r.axvline(r_erg_val, ls='--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
-    
-    ax_Ex_r.set_xlabel(r'Radius $r/M$', fontsize=10)
-    ax_Ex_r.set_ylabel(r'Exhaust energy $E_{ex}$', fontsize=10)
-    ax_Ex_r.set_title('(a) $E_{ex}$ vs radius', fontsize=11)
-    ax_Ex_r.legend(loc='upper right', fontsize=9)
-    ax_Ex_r.set_xlim(r_plus - 0.1, 2.2)
-    
-    y_min = min(np.min(E_ex_arr), -0.6)
-    y_max = max(0.5, np.max(E_ex_arr) * 0.3) if np.max(E_ex_arr) > 0.5 else 0.5
-    ax_Ex_r.set_ylim(y_min, y_max)
-    
-    # (h) E_ex histogram
-    n_bins = 25
-    if neg_mask.any():
-        ax_Ex_hist.hist(E_ex_arr[neg_mask], bins=n_bins, color=COLORS['green'], 
-                        alpha=0.8, label=f'$E_{{ex}} < 0$ ({neg_mask.sum()})', edgecolor='white')
-    if pos_mask.any():
-        ax_Ex_hist.hist(E_ex_arr[pos_mask], bins=n_bins, color=COLORS['gray'], 
-                        alpha=0.5, label=f'$E_{{ex}} > 0$ ({pos_mask.sum()})', edgecolor='white')
-    
-    ax_Ex_hist.axvline(0, ls='-', color=COLORS['black'], lw=2)
-    ax_Ex_hist.axvline(np.min(E_ex_arr), ls=':', color=COLORS['vermilion'], lw=2,
-                       label=f'Min = {np.min(E_ex_arr):.3f}')
-    
-    ax_Ex_hist.set_xlabel(r'Exhaust energy $E_{ex}$', fontsize=10)
-    ax_Ex_hist.set_ylabel('Count', fontsize=10)
-    frac = neg_mask.sum() / len(E_ex_arr) * 100 if len(E_ex_arr) > 0 else 0
-    ax_Ex_hist.set_title(f'(b) Distribution ({frac:.0f}% Penrose)', fontsize=11)
-    ax_Ex_hist.legend(loc='upper right', fontsize=9)
-    
+    # (a) Trajectory - zoomed to show ergosphere burn
+    for i in range(len(x)-1):
+        if thrust_on[i]:
+            ax_traj.plot(x[i:i+2], y_coord[i:i+2], color=COLORS['orange'], lw=1.2, zorder=3)
+        else:
+            ax_traj.plot(x[i:i+2], y_coord[i:i+2], color=COLORS['blue'], lw=1.0, zorder=2)
+
+    ax_traj.plot([], [], color=COLORS['orange'], lw=2, label='Thrust ON')
+    ax_traj.plot([], [], color=COLORS['blue'], lw=1.5, label='Coast')
+    ax_traj.add_patch(plt.Circle((0, 0), r_plus, fill=True, color=COLORS['black'], zorder=10))
+    ax_traj.add_patch(plt.Circle((0, 0), r_erg_val, fill=False, 
+                                  color=COLORS['vermilion'], ls='--', lw=1.5, zorder=1))
+    ax_traj.plot([], [], 'o', color=COLORS['black'], ms=8, label='Horizon')
+    ax_traj.plot([], [], '--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
+    theta_ring = np.linspace(0, 2*np.pi, 100)
+    ax_traj.plot(r_set * np.cos(theta_ring), r_set * np.sin(theta_ring), 
+                 color=COLORS['green'], ls=':', lw=1.0, alpha=0.8, label=f'$r_{{set}}$={r_set}')
+    ax_traj.set_aspect('equal', 'box')
+    ax_traj.set_xlabel(r'$x/M$', fontsize=10)
+    ax_traj.set_ylabel(r'$y/M$', fontsize=10)
+    ax_traj.set_title('(a) Equatorial trajectory (zoomed)', fontsize=11)
+    ax_traj.legend(loc='upper left', fontsize=9)
+    # Zoom to ergosphere region: show from -5M to +5M to capture entry, burn, and exit
+    zoom_extent = 5.0
+    ax_traj.set_xlim(-zoom_extent, zoom_extent)
+    ax_traj.set_ylim(-zoom_extent, zoom_extent)
+
+    # (b) Radius
+    ax_rad.plot(tau, r, color=COLORS['blue'], lw=1.5, label=r'$r(\tau)$')
+    ax_rad.fill_between(tau, 0, r.max()*1.1, where=thrust_on, 
+                        color=COLORS['orange'], alpha=0.15, zorder=0, label='Thrust ON')
+    ax_rad.axhline(r_erg_val, ls='--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
+    ax_rad.axhline(r_set, ls='-.', color=COLORS['green'], lw=1.2, label=f'$r_{{set}}$={r_set}')
+    ax_rad.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
+    ax_rad.set_ylabel(r'Radius $r/M$', fontsize=10)
+    ax_rad.set_ylim(0, r.max()*1.05)
+    ax_rad.set_title('(b) Radial evolution', fontsize=11)
+    ax_rad.legend(loc='upper right', fontsize=9)
+
     plt.tight_layout()
-    plt.savefig('continuous_penrose_Eex.pdf', dpi=300, bbox_inches='tight')
-    plt.savefig('continuous_penrose_Eex.png', dpi=150, bbox_inches='tight')
+    plt.savefig('continuous_trajectory.pdf', dpi=300, bbox_inches='tight')
+    plt.savefig('continuous_trajectory.png', dpi=150, bbox_inches='tight')
 
-# -----------------------------------------------------------------------------
-# FIGURE 4: Diagnostics (1x2) - constraint and instantaneous efficiency
-# -----------------------------------------------------------------------------
-fig4, (ax_const, ax_eta_inst) = plt.subplots(1, 2, figsize=(10, 4))
-fig4.suptitle('Simulation Diagnostics', fontsize=12, fontweight='bold')
+    # -----------------------------------------------------------------------------
+    # FIGURE 2: Energy and Efficiency (1x2)
+    # -----------------------------------------------------------------------------
+    fig2, (ax_em, ax_eff) = plt.subplots(1, 2, figsize=(10, 4))
+    fig2.suptitle('Continuous-Thrust Penrose Process: Energy', fontsize=12, fontweight='bold')
 
-# Constraint
-ax_const.plot(tau, C, color=COLORS['purple'], lw=1.5)
-ax_const.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
-ax_const.set_ylabel(r'$g^{\mu\nu}p_\mu p_\nu + m^2$', fontsize=10)
-ax_const.set_title('(a) Mass-shell constraint', fontsize=11)
-ax_const.ticklabel_format(axis='y', style='sci', scilimits=(-3, 3))
+    # (c) Energy and mass - use separate y-axes but better spacing
+    ax_em.plot(tau, E, color=COLORS['blue'], lw=2, label=r'Energy $E$')
+    ax_em.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
+    ax_em.set_ylabel(r'Energy $E$', fontsize=10)
+    ax_em.set_title(f'(c) Energy: DeltaE = {E[-1] - E[0]:+.3f} ({100*(E[-1]-E[0])/E[0]:+.1f}%)', fontsize=11)
 
-# Instantaneous efficiency
-ax_eta_inst.plot(tau, eta_plot, color=COLORS['green'], lw=1.5, label=r'$\eta_{\mathrm{inst}}$')
-ax_eta_inst.axhline(1.0, ls='--', color=COLORS['vermilion'], lw=1.5, label='Penrose threshold')
-in_ergo = r < r_erg_val
-ax_eta_inst.fill_between(tau, -0.5, 3.0, where=in_ergo, 
-                          color=COLORS['orange'], alpha=0.15, label='In ergosphere')
-ax_eta_inst.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
-ax_eta_inst.set_ylabel(r'$\eta_{\mathrm{inst}}$', fontsize=10)
-ax_eta_inst.set_title('(b) Instantaneous efficiency', fontsize=11)
-ax_eta_inst.set_ylim(-0.2, 3.0)
-ax_eta_inst.legend(loc='upper right', fontsize=9)
+    ax_em_twin = ax_em.twinx()
+    ax_em_twin.plot(tau, m, color=COLORS['orange'], ls='--', lw=2, label=r'Mass $m$')
+    ax_em_twin.set_ylabel(r'Rest mass $m$', fontsize=10, color=COLORS['orange'])
+    ax_em_twin.tick_params(axis='y', labelcolor=COLORS['orange'])
 
-plt.tight_layout()
-plt.savefig('continuous_diagnostics.pdf', dpi=300, bbox_inches='tight')
-plt.savefig('continuous_diagnostics.png', dpi=150, bbox_inches='tight')
+    # Legends on left side to avoid overlap
+    ax_em.legend(loc='upper left', fontsize=9)
+    ax_em_twin.legend(loc='lower left', fontsize=9)
 
-print("\nFigures saved:")
-print("  - continuous_trajectory.pdf/png")
-print("  - continuous_energy.pdf/png")
-print("  - continuous_penrose_Eex.pdf/png")
-print("  - continuous_diagnostics.pdf/png")
-plt.show()
+    # (d) Cumulative efficiency
+    ax_eff.plot(tau, eta_cum_running, color=COLORS['green'], lw=2, label=r'$\eta_{\mathrm{cum}}$')
+    ax_eff.axhline(eta_max, ls='--', color=COLORS['vermilion'], lw=1.5, 
+                   label=f'$\\eta_{{max}}$ = {eta_max:.2f}')
+    ax_eff.axhline(1.0, ls=':', color=COLORS['gray'], lw=1.2, label='Break-even')
+    ax_eff.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
+    ax_eff.set_ylabel(r'Cumulative efficiency $\eta$', fontsize=10)
+    ax_eff.set_title('(d) Extraction efficiency', fontsize=11)
+    ax_eff.legend(loc='lower right', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig('continuous_energy.pdf', dpi=300, bbox_inches='tight')
+    plt.savefig('continuous_energy.png', dpi=150, bbox_inches='tight')
+
+    # -----------------------------------------------------------------------------
+    # FIGURE 3: Penrose Extraction Analysis (1x2)
+    # -----------------------------------------------------------------------------
+    if len(E_ex_history) > 0 and len(r_ex_history) > 0:
+        E_ex_arr = np.array(E_ex_history)
+        r_ex_arr = np.array(r_ex_history)
+        neg_mask = E_ex_arr < 0
+        pos_mask = E_ex_arr >= 0
+    
+        fig3, (ax_Ex_r, ax_Ex_hist) = plt.subplots(1, 2, figsize=(10, 4))
+        fig3.suptitle('Penrose Extraction: Exhaust Energy Analysis', fontsize=12, fontweight='bold')
+    
+        # (g) E_ex vs radius
+        # Use the computed R_EXTRACTION_LIMIT for plotting consistency
+        r_extraction_limit = R_EXTRACTION_LIMIT  # Use computed value, not hardcoded
+    
+        if neg_mask.any():
+            ax_Ex_r.scatter(r_ex_arr[neg_mask], E_ex_arr[neg_mask], 
+                            c=COLORS['green'], s=12, alpha=0.7, label=r'$E_{ex} < 0$ (Penrose)', zorder=3)
+        if pos_mask.any():
+            ax_Ex_r.scatter(r_ex_arr[pos_mask], E_ex_arr[pos_mask], 
+                            c=COLORS['gray'], s=10, alpha=0.4, label=r'$E_{ex} \geq 0$', zorder=2)
+    
+        ax_Ex_r.axhline(0, ls='-', color=COLORS['black'], lw=2, alpha=0.9, zorder=4, label=r'$E_{ex}=0$')
+        ax_Ex_r.axvspan(r_plus, r_extraction_limit, color=COLORS['green'], alpha=0.1, label='Extraction zone')
+        ax_Ex_r.axvline(r_erg_val, ls='--', color=COLORS['vermilion'], lw=1.5, label='Ergosphere')
+    
+        ax_Ex_r.set_xlabel(r'Radius $r/M$', fontsize=10)
+        ax_Ex_r.set_ylabel(r'Exhaust energy $E_{ex}$', fontsize=10)
+        ax_Ex_r.set_title('(a) $E_{ex}$ vs radius', fontsize=11)
+        ax_Ex_r.legend(loc='upper right', fontsize=9)
+        ax_Ex_r.set_xlim(r_plus - 0.1, 2.2)
+    
+        y_min = min(np.min(E_ex_arr), -0.6)
+        y_max = max(0.5, np.max(E_ex_arr) * 0.3) if np.max(E_ex_arr) > 0.5 else 0.5
+        ax_Ex_r.set_ylim(y_min, y_max)
+    
+        # (h) E_ex histogram
+        n_bins = 25
+        if neg_mask.any():
+            ax_Ex_hist.hist(E_ex_arr[neg_mask], bins=n_bins, color=COLORS['green'], 
+                            alpha=0.8, label=f'$E_{{ex}} < 0$ ({neg_mask.sum()})', edgecolor='white')
+        if pos_mask.any():
+            ax_Ex_hist.hist(E_ex_arr[pos_mask], bins=n_bins, color=COLORS['gray'], 
+                            alpha=0.5, label=f'$E_{{ex}} > 0$ ({pos_mask.sum()})', edgecolor='white')
+    
+        ax_Ex_hist.axvline(0, ls='-', color=COLORS['black'], lw=2)
+        ax_Ex_hist.axvline(np.min(E_ex_arr), ls=':', color=COLORS['vermilion'], lw=2,
+                           label=f'Min = {np.min(E_ex_arr):.3f}')
+    
+        ax_Ex_hist.set_xlabel(r'Exhaust energy $E_{ex}$', fontsize=10)
+        ax_Ex_hist.set_ylabel('Count', fontsize=10)
+        frac = neg_mask.sum() / len(E_ex_arr) * 100 if len(E_ex_arr) > 0 else 0
+        ax_Ex_hist.set_title(f'(b) Distribution ({frac:.0f}% Penrose)', fontsize=11)
+        ax_Ex_hist.legend(loc='upper right', fontsize=9)
+    
+        plt.tight_layout()
+        plt.savefig('continuous_penrose_Eex.pdf', dpi=300, bbox_inches='tight')
+        plt.savefig('continuous_penrose_Eex.png', dpi=150, bbox_inches='tight')
+
+    # -----------------------------------------------------------------------------
+    # FIGURE 4: Diagnostics (1x2) - constraint and instantaneous efficiency
+    # -----------------------------------------------------------------------------
+    fig4, (ax_const, ax_eta_inst) = plt.subplots(1, 2, figsize=(10, 4))
+    fig4.suptitle('Simulation Diagnostics', fontsize=12, fontweight='bold')
+
+    # Constraint
+    ax_const.plot(tau, C, color=COLORS['purple'], lw=1.5)
+    ax_const.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
+    ax_const.set_ylabel(r'$g^{\mu\nu}p_\mu p_\nu + m^2$', fontsize=10)
+    ax_const.set_title('(a) Mass-shell constraint', fontsize=11)
+    ax_const.ticklabel_format(axis='y', style='sci', scilimits=(-3, 3))
+
+    # Instantaneous efficiency
+    ax_eta_inst.plot(tau, eta_plot, color=COLORS['green'], lw=1.5, label=r'$\eta_{\mathrm{inst}}$')
+    ax_eta_inst.axhline(1.0, ls='--', color=COLORS['vermilion'], lw=1.5, label='Penrose threshold')
+    in_ergo = r < r_erg_val
+    ax_eta_inst.fill_between(tau, -0.5, 3.0, where=in_ergo, 
+                              color=COLORS['orange'], alpha=0.15, label='In ergosphere')
+    ax_eta_inst.set_xlabel(r'Proper time $\tau/M$', fontsize=10)
+    ax_eta_inst.set_ylabel(r'$\eta_{\mathrm{inst}}$', fontsize=10)
+    ax_eta_inst.set_title('(b) Instantaneous efficiency', fontsize=11)
+    ax_eta_inst.set_ylim(-0.2, 3.0)
+    ax_eta_inst.legend(loc='upper right', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig('continuous_diagnostics.pdf', dpi=300, bbox_inches='tight')
+    plt.savefig('continuous_diagnostics.png', dpi=150, bbox_inches='tight')
+
+    print("\nFigures saved:")
+    print("  - continuous_trajectory.pdf/png")
+    print("  - continuous_energy.pdf/png")
+    print("  - continuous_penrose_Eex.pdf/png")
+    print("  - continuous_diagnostics.pdf/png")
+    if os.environ.get("PENROSE_SHOW_PLOTS") == "1":
+        plt.show()
+    else:
+        plt.close("all")
+
+if __name__ == "__main__":
+    main()

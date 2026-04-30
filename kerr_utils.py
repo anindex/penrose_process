@@ -454,7 +454,11 @@ def integrate_exhaust_geodesic(r0, th0, u_ex_contra, a, M=1.0, tau_max=50.0,
     events for horizon crossing and escape, matching the main parameter-sweep
     solver family.
     
-    Returns dict with 'captured', 'escaped', 'r_final', 'trajectory'.
+    Returns dict with:
+    - captured: True only if the inward capture terminal event fired
+    - escaped: True only if the large-r escape terminal event fired
+    - r_final, tau_final, r_min, trajectory: diagnostics
+    - solver_success: SciPy integrator success flag
     """
     r_plus = horizon_radius(a, M)
     r_capture = r_plus + r_horizon_margin
@@ -516,13 +520,35 @@ def integrate_exhaust_geodesic(r0, th0, u_ex_contra, a, M=1.0, tau_max=50.0,
     r_min = float(np.min(sol.y[0])) if sol.y.shape[1] > 0 else r0
     tau_final = sol.t[-1] if len(sol.t) > 0 else 0.0
     
+    # Use terminal *events* only. A final radius inside r_capture at tau_max
+    # without a capture event is inconclusive (orbit could still turn around).
+    t_events = getattr(sol, "t_events", None) or ()
+    cap_times = (
+        np.asarray(t_events[0], dtype=float)
+        if len(t_events) > 0 and t_events[0] is not None
+        else np.array([])
+    )
+    esc_times = (
+        np.asarray(t_events[1], dtype=float)
+        if len(t_events) > 1 and t_events[1] is not None
+        else np.array([])
+    )
+
+    captured = bool(cap_times.size > 0)
+    escaped = bool(esc_times.size > 0)
+
+    if not getattr(sol, "success", True):
+        captured = False
+        escaped = False
+
     return {
-        'captured': r_final < r_capture,
-        'escaped': r_final > 50.0 * M,
+        'captured': captured,
+        'escaped': escaped,
         'r_final': float(r_final),
         'tau_final': float(tau_final),
         'r_min': r_min,
-        'trajectory': (sol.t, sol.y[0])
+        'trajectory': (sol.t, sol.y[0]),
+        'solver_success': bool(getattr(sol, "success", True)),
     }
 
 
@@ -548,8 +574,10 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
     
     n_neg_captured = 0
     n_neg_escaped = 0
+    n_neg_inconclusive = 0
     n_pos_captured = 0
     n_pos_escaped = 0
+    n_pos_inconclusive = 0
     
     capture_failures = []  # Samples with E_ex < 0 that didn't get captured
     escape_failures = []   # Samples with E_ex >= 0 that didn't escape
@@ -560,14 +588,23 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
         )
         
         if sample['E_ex'] < 0:
-            # Negative-energy exhaust should be captured
+            # Negative-energy exhaust must be confirmed captured, not merely
+            # "not escaped", before using it as Penrose energy extraction.
             if result['captured']:
                 n_neg_captured += 1
             elif result['escaped']:
                 n_neg_escaped += 1
                 capture_failures.append({
                     'sample': sample,
-                    'result': result
+                    'result': result,
+                    'failure_type': 'escaped',
+                })
+            else:
+                n_neg_inconclusive += 1
+                capture_failures.append({
+                    'sample': sample,
+                    'result': result,
+                    'failure_type': 'inconclusive',
                 })
         else:
             # Positive-energy exhaust should escape (if we're checking)
@@ -578,7 +615,15 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
                     n_pos_captured += 1
                     escape_failures.append({
                         'sample': sample,
-                        'result': result
+                        'result': result,
+                        'failure_type': 'captured',
+                    })
+                else:
+                    n_pos_inconclusive += 1
+                    escape_failures.append({
+                        'sample': sample,
+                        'result': result,
+                        'failure_type': 'inconclusive',
                     })
     
     if verbose:
@@ -589,20 +634,24 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
             print(f"  Negative-E_ex samples:       {n_negative_E}")
             print(f"    Confirmed captured:        {n_neg_captured}")
             print(f"    Unexpectedly escaped:      {n_neg_escaped}")
+            print(f"    Inconclusive:              {n_neg_inconclusive}")
             if n_neg_captured == n_negative_E:
                 print(f"    [OK] All negative-E exhaust falls into horizon")
-            elif n_neg_escaped > 0:
-                print(f"    [!] WARNING: {n_neg_escaped} samples with E_ex < 0 escaped!")
-                print(f"      This would INVALIDATE the Penrose extraction claim.")
+            else:
+                print(f"    [!] WARNING: {n_negative_E - n_neg_captured} samples with E_ex < 0")
+                print(f"      were not confirmed captured.")
+                print(f"      This invalidates a confirmed Penrose extraction claim for this batch.")
         
         if check_positive_escape and n_positive_E > 0:
             print(f"\n  Positive-E_ex samples:       {n_positive_E}")
             print(f"    Confirmed escaped:         {n_pos_escaped}")
             print(f"    Unexpectedly captured:     {n_pos_captured}")
+            print(f"    Inconclusive:              {n_pos_inconclusive}")
             if n_pos_escaped == n_positive_E:
                 print(f"    [OK] All positive-E exhaust escapes to infinity")
-            elif n_pos_captured > 0:
-                print(f"    Note: {n_pos_captured} samples with E_ex >= 0 were captured.")
+            elif n_pos_captured > 0 or n_pos_inconclusive > 0:
+                print(f"    Note: {n_pos_captured} samples with E_ex >= 0 were captured")
+                print(f"      and {n_pos_inconclusive} were inconclusive.")
                 print(f"      This is physically possible (low-energy particles can fall in).")
                 print(f"      The 'energy to BH' calculation should account for this.")
     
@@ -611,11 +660,13 @@ def verify_exhaust_capture_batch(exhaust_samples, a, M=1.0, verbose=True,
         'n_positive_E': n_positive_E,
         'n_neg_captured': n_neg_captured,
         'n_neg_escaped': n_neg_escaped,
+        'n_neg_inconclusive': n_neg_inconclusive,
         'n_pos_captured': n_pos_captured,
         'n_pos_escaped': n_pos_escaped,
+        'n_pos_inconclusive': n_pos_inconclusive,
         'capture_failures': capture_failures,
         'escape_failures': escape_failures,
-        'penrose_valid': (n_neg_escaped == 0)  # Penrose claim is valid if all negative-E captured
+        'penrose_valid': (n_neg_captured == n_negative_E)
     }
 
 
@@ -1438,13 +1489,18 @@ def print_energy_budget(budget, a_spin, M_bh=1.0):
     print(f"\n{'CONSERVATION CHECK':^65}")
     print("-"*65)
     print(f"  DeltaE + E_to_BH =                   {budget['conservation_error']:+.6e}")
-    if abs(budget['conservation_error']) < 0.01 * abs(budget['Delta_E'] + 1e-10):
-        print(f"    [OK] Energy approximately conserved")
+    scale = max(abs(budget['Delta_E']), abs(budget['energy_to_BH']), 1e-12)
+    rel_err = abs(budget['conservation_error']) / scale
+    if rel_err < 1e-9:
+        print("    [OK] Ledger closes to ~1e-9 relative to dominant energy exchange.")
+    elif rel_err < 0.01:
+        print("    [OK] Energy approximately conserved (within ~1% of dominant exchange).")
     else:
-        print(f"    Note: Large residual is expected for approximate thrust model.")
-        print(f"    The model imposes mass loss rather than deriving it from exact")
-        print(f"    4-momentum conservation. This doesn't invalidate the physics:")
-        print(f"    E_ex < 0 remains the unambiguous Penrose extraction signature.")
+        print("    Note: Nonzero residual is expected here: the integrator applies a")
+        print("    mass-shell projection on p_r after each RK4 step, which is not fed")
+        print("    back into the exhaust-mass ledger, and the ledger sums E_ex * dmu")
+        print("    at RK4 stages. Use this sum as a diagnostic, not an ODE tolerance.")
+        print("    E_ex < 0 remains the Penrose extraction signature when confirmed.")
     
     print(f"\n{'EFFICIENCY METRICS':^65}")
     print("-"*65)

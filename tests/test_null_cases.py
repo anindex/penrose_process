@@ -10,7 +10,7 @@ import numpy as np
 
 from kerr_utils import (
     kerr_metric_components, horizon_radius, ergosphere_radius,
-    compute_pt_from_mass_shell, compute_energy
+    compute_optimal_exhaust_direction
 )
 
 
@@ -35,7 +35,6 @@ def test_schwarzschild_no_penrose(verbose=True):
     # At any radius > r+, try to compute exhaust energy
     # For Schwarzschild, g_tphi = 0, so no frame dragging
     test_radii = [2.5, 3.0, 4.0, 6.0]
-    all_positive = True
     
     for r in test_radii:
         th = np.pi/2
@@ -68,7 +67,7 @@ def test_schwarzschild_no_penrose(verbose=True):
         print("  => Penrose extraction impossible [OK]")
         print()
     
-    return True
+    return None
 
 
 def test_no_extraction_outside_ergosphere(verbose=True):
@@ -127,7 +126,7 @@ def test_no_extraction_outside_ergosphere(verbose=True):
         print("  => Penrose extraction (E < 0) is geometrically impossible [OK]")
         print()
     
-    return True
+    return None
 
 
 def test_exhaust_energy_signs(verbose=True):
@@ -145,14 +144,6 @@ def test_exhaust_energy_signs(verbose=True):
         print("=" * 60)
         print("TEST: Exhaust Energy Sign Dependence on Location")
         print("=" * 60)
-    
-    # We need to import the thrust machinery
-    try:
-        from continuous_thrust_case import compute_optimal_exhaust_direction
-    except ImportError:
-        if verbose:
-            print("  Skipping: continuous_thrust_case not available")
-        return True
     
     v_e = 0.95  # Exhaust velocity
     
@@ -222,7 +213,7 @@ def test_exhaust_energy_signs(verbose=True):
     if verbose:
         print()
     
-    return True
+    return None
 
 
 if __name__ == "__main__":
