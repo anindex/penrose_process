@@ -1,8 +1,8 @@
 # Penrose Energy Extraction via Rocket Propulsion
 
-[![arXiv](https://img.shields.io/badge/arXiv-2601.19616-brown)](https://arxiv.org/abs/2601.19616) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRD](https://img.shields.io/badge/Phys.%20Rev.%20D-10.1103%2Ff3jn--7wcp-blue)](https://doi.org/10.1103/f3jn-7wcp) [![arXiv](https://img.shields.io/badge/arXiv-2601.19616-brown)](https://arxiv.org/abs/2601.19616) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Numerical study of energy extraction from rotating (Kerr) black holes via the Penrose process using rocket propulsion. This repository accompanies the paper [*"On the rarity of rocket-driven Penrose extraction in Kerr spacetime"*](https://arxiv.org/abs/2601.19616).
+Numerical study of energy extraction from rotating (Kerr) black holes via the Penrose process using rocket propulsion. This repository accompanies the paper [*"Rarity of rocket-driven Penrose extraction in Kerr spacetime"*](https://doi.org/10.1103/f3jn-7wcp), published in *Physical Review D*.
 
 ## Results
 
@@ -12,7 +12,7 @@ Through **320,000 trajectory simulations** (104,000 main experimental phases + 1
 |---------|-------|
 | Broad-scan success rate ($a/M = 0.95$) | ~1% |
 | Focused sweet-spot success rate ($a/M = 0.95$, grid) | ~14% |
-| Peak success rate ($a/M = 0.99$, $v_e = 0.98c$, Gaussian prior) | 86.3% (exploratory, reused ensemble; see Appendix B) |
+| Peak success rate ($a/M = 0.99$, $v_e = 0.98c$, Gaussian prior) | ~65--70% (exploratory, independent-seed verified; see Appendix B) |
 | Peak success rate ($a/M = 0.95$, $v_e = 0.98c$, Gaussian prior) | 69.6% |
 | Critical spin threshold | $0.88 < a_{\rm crit}/M \lesssim 0.89$ |
 | Single-impulse efficiency | $\eta_{\rm cum} \approx 5.7\%$ ($\Delta E/\delta\mu \approx 20\%$) |
@@ -220,9 +220,13 @@ If you found this repository useful, please consider citing our paper:
 
 ```bibtex
 @article{le2026rarity,
-  title={On the rarity of rocket-driven Penrose extraction in Kerr spacetime},
-  author={Le, An T},
-  journal={arXiv preprint arXiv:2601.19616},
-  year={2026}
+  title   = {Rarity of rocket-driven Penrose extraction in Kerr spacetime},
+  author  = {Le, An T.},
+  journal = {Physical Review D},
+  year    = {2026},
+  doi     = {10.1103/f3jn-7wcp},
+  eprint  = {2601.19616},
+  archivePrefix = {arXiv},
+  primaryClass  = {gr-qc}
 }
 ```
